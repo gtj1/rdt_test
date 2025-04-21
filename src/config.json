@@ -1,0 +1,37 @@
+{
+    "save_path": "./data",
+    "system": {
+        "ip": "192.168.1.41",
+        "port": 8899
+    },
+    "robot": {
+        "name": "Robot_E5",
+        "max_joint_angular_acceleration": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        "max_joint_angular_velocity": [0.7, 0.7, 0.7, 0.7, 0.7, 0.7],
+        "max_end_effector_acceleration": 0.5,
+        "max_end_effector_velocity": 0.2,
+        "collision_class": 6
+    },
+    "gripper": {
+        "port": "/dev/ttyUSB0",
+        "baud_rate": 115200,
+        "slave_id": 9,
+        "max_position": 255.0
+    },
+    "camera": {
+        "rgbd": {
+            "width": 640,
+            "height": 480,
+            "frame_rate": 30
+        },
+        "usb": {
+            "width": 320,
+            "height": 256,
+            "warmup_frames": 100
+        },
+        "resize": {
+            "width": 320,
+            "height": 256
+        }
+    }
+}
