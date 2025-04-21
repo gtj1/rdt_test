@@ -1,10 +1,11 @@
 {
-    "save_path": "./data",
-    "system": {
-        "ip": "192.168.1.41",
-        "port": 8899
+    "path": {
+        "replay": "./data/replay",
+        "record": "./data/record"
     },
-    "robot": {
+    "arm": {
+        "ip": "192.168.1.41",
+        "port": 8899,
         "name": "Robot_E5",
         "max_joint_angular_acceleration": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
         "max_joint_angular_velocity": [0.7, 0.7, 0.7, 0.7, 0.7, 0.7],

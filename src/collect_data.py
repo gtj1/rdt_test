@@ -4,7 +4,7 @@ import cv2
 import json
 import numpy as np
 from dataclasses import dataclass
-from typing import TypedDict, Literal, TypeAlias, Iterable, overload
+from typing import TypedDict, Literal, TypeAlias, Iterator, overload
 from multiprocessing import Process, Queue
 
 import pyrealsense2 as rs
@@ -16,30 +16,34 @@ with open('config.json', 'r', encoding='utf-8') as f:
 
 Pose: TypeAlias = tuple[np.ndarray, np.ndarray]  # xyz in m, rpy in rad
 
+class ArmState(TypedDict):
+    arm_name: str
+    joint_position: list[float]
+    end_effector_pose: Pose
+
 class GripperState(TypedDict):
     position: float
     speed: float
     torque: float
 
 class RobotCommand(TypedDict):
-    robot_name: str
     command_type: Literal['record', 'move', 'shutdown']
     # The following fields are only used when command_type is not 'shutdown'
-    pose: Pose | None
-    joint_position: list[float] | None
+    arm_state: ArmState | None
     gripper_state: GripperState | None
 
 class CameraFrame(TypedDict):
     rgbd_depth: np.ndarray
-    rgbd_color: np.ndarray
+    rgbd_image: np.ndarray
     usb_image: np.ndarray
+    
+RecordFrame: TypeAlias = tuple[RobotCommand, CameraFrame]
 
 class RobotController(Process):
-    ip: str
-    port: int
-
-    robot: Auboi5Robot
-    robot_name: str
+    arm: Auboi5Robot
+    arm_ip: str
+    arm_port: int
+    arm_name: str
 
     gripper: RgClawControl
     gripper_port: str
@@ -59,61 +63,67 @@ class RobotController(Process):
         super().__init__()
         self.command_queue = command_queue
         self.record_queue = record_queue
-
-    def connect(self):
-        super().__init__()
-
-        self.ip = config['sysem']['ip']
-        self.port = config['sysem']['port']
-        self.robot_name = config['robot']['name']
-
-        self.robot = Auboi5Robot()
-        self.robot.create_context()
-
-        result = self.robot.connect(self.ip, self.port)
-        if result != RobotErrorType.RobotError_SUCC:
-            raise RuntimeError(f"Failed to connect to robot {self.robot_name}")
         
-        # 1 for real robot, 0 for simulation
-        self.robot.set_work_mode(1)
-        self.robot.project_startup()
-        self.robot.set_collision_class(config['robot']['collision_class'])
-        self.robot.enable_robot_event()
-        self.robot.init_profile()
+    def connect_to_arm(self):
+        self.arm_ip = config['arm']['ip']
+        self.arm_port = config['arm']['port']
+        self.arm_name = config['arm']['name']
 
-        self.robot.set_joint_maxacc(config['robot']['max_joint_angular_acceleration'])
-        self.robot.set_joint_maxvelc(config['robot']['max_joint_angular_velocity'])
-        self.robot.set_end_max_line_acc(config['robot']['max_end_effector_acceleration'])
-        self.robot.set_end_max_line_velc(config['robot']['max_end_effector_velocity'])
+        self.arm = Auboi5Robot()
+        self.arm.create_context()
 
+        result = self.arm.connect(self.arm_ip, self.arm_port)
+        if result != RobotErrorType.RobotError_SUCC:
+            raise RuntimeError(f'Failed to connect to arm {self.arm_name}')
+        
+        # 1 for real arm, 0 for simulation
+        self.arm.set_work_mode(1)
+        self.arm.project_startup()
+        self.arm.set_collision_class(config['arm']['collision_class'])
+        self.arm.enable_robot_event()
+        self.arm.init_profile()
+        
+    def set_arm_parameters(self):
+        self.arm.set_joint_maxacc(config['arm']['max_joint_angular_acceleration'])
+        self.arm.set_joint_maxvelc(config['arm']['max_joint_angular_velocity'])
+        self.arm.set_end_max_line_acc(config['arm']['max_end_effector_acceleration'])
+        self.arm.set_end_max_line_velc(config['arm']['max_end_effector_velocity'])
+        
+    def connect_to_gripper(self):
         self.gripper = RgClawControl()
         self.gripper_port = config['gripper']['port']
         self.gripper_baudrate = config['gripper']['baudrate']
         self.gripper_slave_id = config['gripper']['slave_id']
         self.gripper_max_position = config['gripper']['max_position']
+        
         result = self.gripper.serialOperation(
-            com = self.gripper_port,
-            baudrate = self.gripper_baudrate,
-            state = True # open
+            com=self.gripper_port,
+            baudrate=self.gripper_baudrate,
+            state=True  # open
         )
         if result != 1:
-            raise RuntimeError(f"Failed to connect to gripper, info: {result}")
+            raise RuntimeError(f'Failed to connect to gripper, info: {result}')
         
         result = self.gripper.enableClamp(self.gripper_slave_id, True)
         if result != 1:
-            raise RuntimeError(f"Failed to enable gripper, info: {result}")
+            raise RuntimeError(f'Failed to enable gripper, info: {result}')
         else:
-            print("Gripper enabled")
+            print('Gripper enabled')
+
+    def connect(self):
+        self.connect_to_arm()
+        self.set_arm_parameters()
+        self.connect_to_gripper()
 
         self.running = True
     
-    def robot_move_to(self, pose: Pose) -> bool:
-        xyz, rpy = pose
+    def arm_move_to(self, end_effector_pose: Pose) -> bool:
+        xyz, rpy = end_effector_pose
         try:
-            self.robot.move_to_target_in_cartesian(xyz, rpy)
+            self.arm.move_to_target_in_cartesian(xyz, rpy)
             return True
         except Exception as e:
-            print(f"Failed to move robot to {pose}: {e}")
+            print(f'Failed to move arm to {end_effector_pose}: {e}')
             return False
         
     def gripper_move_to(self, gripper_state: GripperState) -> bool:
@@ -121,7 +131,7 @@ class RobotController(Process):
         speed = gripper_state['speed']
         torque = gripper_state['torque']
         if position < 0 or position > self.gripper_max_position:
-            print(f"Invalid gripper position: {position}")
+            print(f'Invalid gripper position: {position}')
             return False
         try:
             self.gripper.runWithParam(
@@ -132,66 +142,82 @@ class RobotController(Process):
             )
             return True
         except Exception as e:
-            print(f"Failed to move gripper to {gripper_state}: {e}")
+            print(f'Failed to move gripper to {gripper_state}: {e}')
             return False
-    
-    def set_shutdown_command(self) -> None:
-        self.command_queue.put(
-            {'robot_name': self.robot_name, 'command': 'shutdown'}
-        )
+        
+    def execute(self, command: RobotCommand) -> bool:
+        command_type = command['command_type']
+        if command_type == 'move':
+            end_effector_pose = command['arm_state']['end_effector_pose']
+            gripper_state = command['gripper_state']
+            if end_effector_pose is None or gripper_state is None:
+                raise ValueError('Pose and gripper state must be provided for move command')
+            return self.arm_move_to(end_effector_pose) and self.gripper_move_to(gripper_state)
+        elif command_type == 'shutdown':
+            self.running = False
+            return True
+        else:
+            raise ValueError(f'Unknown command type: {command_type}')
         
     def release(self):
-        if self.robot.connected:
-            self.robot.disconnect()
-            self.robot.uninitialize()
-        print(f"{self.robot_name} controller shutdown")
+        if self.arm.connected:
+            self.arm.disconnect()
+            self.arm.uninitialize()
+        print(f'{self.arm_name} controller shutdown')
         
     def check_command_queue(self) -> bool:
         if self.command_queue.empty():
             return
         command = self.command_queue.get()
-        command_type = command['command_type']
-        if command_type == 'stop':
-            self.running = False
-            return True
-        elif command_type != 'move':
-            raise ValueError(f"Unknown command type: {command_type}")
-        robot_result = self.robot_move_to(command['pose'])
-        gripper_result = self.gripper_move_to(command['gripper_state'])
-        return robot_result and gripper_result
-
-    def record_data(self) -> bool:
-        if not self.running:
-            return
-        current_state: dict = self.robot.get_current_waypoint()
+        self.execute(command)
+        
+    def get_arm_state(self) -> ArmState | None:
+        current_state: dict = self.arm.get_current_waypoint()
         if current_state is None:
-            return False
+            return None
         joint_position = current_state['joint']
-        xyz = current_state['pos']
-        rpy = self.robot.quaternion_to_rpy(current_state['ori'])
-        pose = (xyz, rpy)
-
+        xyz = np.array(current_state['pos'])
+        rpy = np.array(self.arm.quaternion_to_rpy(current_state['ori']))
+        end_effector_pose = (xyz, rpy)
+        return {
+            'arm_name': self.arm_name,
+            'joint_position': joint_position,
+            'end_effector_pose': end_effector_pose
+        }
+    
+    def get_gripper_state(self) -> GripperState | None:
         gripper_position = self.gripper.getClampCurrentLocation(self.gripper_slave_id)
+        if isinstance(gripper_position, list) and len(gripper_position) == 1:
+            gripper_position = gripper_position[0]
+        else:
+            print(f'Invalid gripper position: {gripper_position}')
+            return None
         gripper_speed = self.gripper.getClampCurrentSpeed(self.gripper_slave_id)
         gripper_torque = self.gripper.getClampCurrentTorque(self.gripper_slave_id)
-        gripper_state: GripperState = {
+        
+        return {
             'position': gripper_position,
             'speed': gripper_speed,
             'torque': gripper_torque
         }
 
-        if isinstance(gripper_position, list) and len(gripper_position) == 1:
-            gripper_position = gripper_position[0]
-        else:
-            gripper_position = -1 # invalid
+    def record_data(self) -> bool:
+        if not self.running:
+            return False
+        
+        arm_state = self.get_arm_state()
+        gripper_state = self.get_gripper_state()
+        
+        if arm_state is None or gripper_state is None:
+            return False
 
         self.record_queue.put({
-            'robot_name': self.robot_name,
             'command_type': 'record',
-            'pose': pose,
-            'joint_position': joint_position,
+            'arm_state': arm_state,
             'gripper_state': gripper_state
         })
+        
+        return True
         
     def loop(self):
         self.check_command_queue()
@@ -200,14 +226,15 @@ class RobotController(Process):
     def run(self):
         try:
             self.connect()
-            print(f"{self.robot_name} connected")
+            print(f'{self.arm_name} connected')
             while self.running:
                 self.loop()
                 time.sleep(0.1)
         except Exception as e:
-            print(f"Exception in {self.robot_name} thread: {e}")
+            print(f'Exception in {self.arm_name} thread: {e}')
         finally:
             self.release()
+
 
 class CameraCollector:
     rgbd_camera: rs.pipeline
@@ -223,7 +250,7 @@ class CameraCollector:
     resize_height: int
 
     def __init__(self):
-        self.pipeline = rs.pipeline()
+        self.rgbd_camera = rs.pipeline()
         self.rgbd_width = config['camera']['rgbd']['width']
         self.rgbd_height = config['camera']['rgbd']['height']
         self.rgbd_frame_rate = config['camera']['rgbd']['frame_rate']
@@ -235,7 +262,7 @@ class CameraCollector:
         rs_config.enable_stream(
             rs.stream.color, self.rgbd_width, self.rgbd_height, rs.format.bgr8, self.rgbd_frame_rate
         )
-        self.pipeline.start(rs_config)
+        self.rgbd_camera.start(rs_config)
 
         self.usb_camera = cv2.VideoCapture(0)
         self.usb_width = config['camera']['usb']['width']
@@ -252,10 +279,10 @@ class CameraCollector:
         self.resize_width = config['camera']['resize']['width']
         self.resize_height = config['camera']['resize']['height']
         
-        print("Camera initialized")
+        print('Camera initialized')
 
-    def get_frame(self) -> CameraFrame:
-        frames = self.pipeline.wait_for_frames()
+    def shot(self) -> CameraFrame:
+        frames = self.rgbd_camera.wait_for_frames()
         depth_frame = frames.get_depth_frame()
         color_frame = frames.get_color_frame()
 
@@ -279,8 +306,9 @@ class CameraCollector:
         }
     
     def release(self):
-        self.pipeline.stop()
+        self.rgbd_camera.stop()
         self.usb_camera.release()
+
 
 class DataCollector(Process):
     save_path: str
@@ -310,7 +338,7 @@ class DataCollector(Process):
         assert robot_state['command_type'] == 'record'
 
         np.save(
-            f"{self.save_path}/{self.index}.npy",
+            f'{self.save_path}/{self.index}.npy',
             (robot_state, camera_frame),
             allow_pickle=True
         )
@@ -329,7 +357,7 @@ class DataCollector(Process):
                     latest = self.record_queue.get()
                     if latest['command_type'] == 'record':
                         robot_state = latest
-                camera_frame = self.camera_collector.get_frame()
+                camera_frame = self.camera_collector.shot()
                 if robot_state:
                     self.save(robot_state, camera_frame)
 
@@ -342,9 +370,9 @@ class DataCollector(Process):
 
         finally:
             self.camera_collector.release()
+            
 
-
-class DataFeeder(Process):
+class ReplayFeeder(Process):
     dataset_path: str
     npy_files: list[str]
     command_queue: Queue[RobotCommand]
@@ -360,11 +388,16 @@ class DataFeeder(Process):
                 self.npy_files.append(file)
         self.npy_files.sort(key=lambda x: int(x.split('.')[0]))
     
-    def __iter__(self) -> Iterable[tuple[RobotCommand, CameraFrame]]:
+    def __iter__(self) -> Iterator[tuple[RobotCommand, CameraFrame]]:
         for file in self.npy_files:
             file_path = os.path.join(self.dataset_path, file)
-            robot_state, camera_frame = np.load(file_path, allow_pickle=True).item()
-            yield robot_state, camera_frame
+            load_result = np.load(file_path, allow_pickle=True).item()
+            if load_result is None:
+                print(f'Failed to load {file_path}')
+                continue
+            
+            robot_state, camera_frame = load_result
+            yield (robot_state, camera_frame)
     
     @overload
     def run(self):
@@ -372,21 +405,26 @@ class DataFeeder(Process):
             robot_state['command_type'] = 'move'
             self.command_queue.put(robot_state)
 
-if __name__ == 'main':
+if __name__ == '__main__':
     logger_init()
-    save_path = config['save_path']
+    replay_path = config['path']['replay']
+    save_path = config['path']['save']
 
     command_queue = Queue()
     record_queue = Queue()
 
-    camera = CameraCollector()
-    data_feeder = DataFeeder(command_queue, save_path)
+    replay_feeder = ReplayFeeder(command_queue, replay_path)
     data_collector = DataCollector(record_queue, save_path)
 
     try:
         robot_controller = RobotController(command_queue, record_queue)
     except Exception as e:
-        print(f"Failed to initialize robot controller: {e}")
+        print(f'Failed to initialize arm controller: {e}')
         exit(1)
-
-
+    
+    try:
+        replay_feeder.start()
+        data_collector.start()
+        robot_controller.start()   
+    except KeyboardInterrupt:
+        print("Exit")
