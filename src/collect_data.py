@@ -16,15 +16,18 @@ with open('config.json', 'r', encoding='utf-8') as f:
 
 Pose: TypeAlias = tuple[np.ndarray, np.ndarray]  # xyz in m, rpy in rad
 
+
 class ArmState(TypedDict):
     arm_name: str
     joint_position: list[float]
     end_effector_pose: Pose
 
+
 class GripperState(TypedDict):
     position: float
     speed: float
     torque: float
+
 
 class RobotCommand(TypedDict):
     command_type: Literal['record', 'move', 'shutdown']
@@ -32,12 +35,15 @@ class RobotCommand(TypedDict):
     arm_state: ArmState | None
     gripper_state: GripperState | None
 
+
 class CameraFrame(TypedDict):
     rgbd_depth: np.ndarray
     rgbd_image: np.ndarray
     usb_image: np.ndarray
-    
+
+
 RecordFrame: TypeAlias = tuple[RobotCommand, CameraFrame]
+
 
 class RobotController(Process):
     arm: Auboi5Robot
@@ -63,7 +69,7 @@ class RobotController(Process):
         super().__init__()
         self.command_queue = command_queue
         self.record_queue = record_queue
-        
+
     def connect_to_arm(self):
         self.arm_ip = config['arm']['ip']
         self.arm_port = config['arm']['port']
@@ -75,27 +81,30 @@ class RobotController(Process):
         result = self.arm.connect(self.arm_ip, self.arm_port)
         if result != RobotErrorType.RobotError_SUCC:
             raise RuntimeError(f'Failed to connect to arm {self.arm_name}')
-        
+
         # 1 for real arm, 0 for simulation
         self.arm.set_work_mode(1)
         self.arm.project_startup()
         self.arm.set_collision_class(config['arm']['collision_class'])
         self.arm.enable_robot_event()
         self.arm.init_profile()
-        
+
     def set_arm_parameters(self):
-        self.arm.set_joint_maxacc(config['arm']['max_joint_angular_acceleration'])
+        self.arm.set_joint_maxacc(
+            config['arm']['max_joint_angular_acceleration'])
         self.arm.set_joint_maxvelc(config['arm']['max_joint_angular_velocity'])
-        self.arm.set_end_max_line_acc(config['arm']['max_end_effector_acceleration'])
-        self.arm.set_end_max_line_velc(config['arm']['max_end_effector_velocity'])
-        
+        self.arm.set_end_max_line_acc(
+            config['arm']['max_end_effector_acceleration'])
+        self.arm.set_end_max_line_velc(
+            config['arm']['max_end_effector_velocity'])
+
     def connect_to_gripper(self):
         self.gripper = RgClawControl()
         self.gripper_port = config['gripper']['port']
         self.gripper_baudrate = config['gripper']['baudrate']
         self.gripper_slave_id = config['gripper']['slave_id']
         self.gripper_max_position = config['gripper']['max_position']
-        
+
         result = self.gripper.serialOperation(
             com=self.gripper_port,
             baudrate=self.gripper_baudrate,
@@ -103,7 +112,7 @@ class RobotController(Process):
         )
         if result != 1:
             raise RuntimeError(f'Failed to connect to gripper, info: {result}')
-        
+
         result = self.gripper.enableClamp(self.gripper_slave_id, True)
         if result != 1:
             raise RuntimeError(f'Failed to enable gripper, info: {result}')
@@ -116,7 +125,7 @@ class RobotController(Process):
         self.connect_to_gripper()
 
         self.running = True
-    
+
     def arm_move_to(self, end_effector_pose: Pose) -> bool:
         xyz, rpy = end_effector_pose
         try:
@@ -125,7 +134,7 @@ class RobotController(Process):
         except Exception as e:
             print(f'Failed to move arm to {end_effector_pose}: {e}')
             return False
-        
+
     def gripper_move_to(self, gripper_state: GripperState) -> bool:
         position = gripper_state['position']
         speed = gripper_state['speed']
@@ -135,42 +144,43 @@ class RobotController(Process):
             return False
         try:
             self.gripper.runWithParam(
-                slaveId = self.gripper_slave_id,
-                pos = position,
-                speed = speed,
-                torque = torque
+                slaveId=self.gripper_slave_id,
+                pos=position,
+                speed=speed,
+                torque=torque
             )
             return True
         except Exception as e:
             print(f'Failed to move gripper to {gripper_state}: {e}')
             return False
-        
+
     def execute(self, command: RobotCommand) -> bool:
         command_type = command['command_type']
         if command_type == 'move':
             end_effector_pose = command['arm_state']['end_effector_pose']
             gripper_state = command['gripper_state']
             if end_effector_pose is None or gripper_state is None:
-                raise ValueError('Pose and gripper state must be provided for move command')
+                raise ValueError(
+                    'Pose and gripper state must be provided for move command')
             return self.arm_move_to(end_effector_pose) and self.gripper_move_to(gripper_state)
         elif command_type == 'shutdown':
             self.running = False
             return True
         else:
             raise ValueError(f'Unknown command type: {command_type}')
-        
+
     def release(self):
         if self.arm.connected:
             self.arm.disconnect()
             self.arm.uninitialize()
         print(f'{self.arm_name} controller shutdown')
-        
+
     def check_command_queue(self) -> bool:
         if self.command_queue.empty():
             return
         command = self.command_queue.get()
         self.execute(command)
-        
+
     def get_arm_state(self) -> ArmState | None:
         current_state: dict = self.arm.get_current_waypoint()
         if current_state is None:
@@ -184,17 +194,20 @@ class RobotController(Process):
             'joint_position': joint_position,
             'end_effector_pose': end_effector_pose
         }
-    
+
     def get_gripper_state(self) -> GripperState | None:
-        gripper_position = self.gripper.getClampCurrentLocation(self.gripper_slave_id)
+        gripper_position = self.gripper.getClampCurrentLocation(
+            self.gripper_slave_id)
         if isinstance(gripper_position, list) and len(gripper_position) == 1:
             gripper_position = gripper_position[0]
         else:
             print(f'Invalid gripper position: {gripper_position}')
             return None
-        gripper_speed = self.gripper.getClampCurrentSpeed(self.gripper_slave_id)
-        gripper_torque = self.gripper.getClampCurrentTorque(self.gripper_slave_id)
-        
+        gripper_speed = self.gripper.getClampCurrentSpeed(
+            self.gripper_slave_id)
+        gripper_torque = self.gripper.getClampCurrentTorque(
+            self.gripper_slave_id)
+
         return {
             'position': gripper_position,
             'speed': gripper_speed,
@@ -204,10 +217,10 @@ class RobotController(Process):
     def record_data(self) -> bool:
         if not self.running:
             return False
-        
+
         arm_state = self.get_arm_state()
         gripper_state = self.get_gripper_state()
-        
+
         if arm_state is None or gripper_state is None:
             return False
 
@@ -216,9 +229,9 @@ class RobotController(Process):
             'arm_state': arm_state,
             'gripper_state': gripper_state
         })
-        
+
         return True
-        
+
     def loop(self):
         self.check_command_queue()
         self.record_data()
@@ -254,7 +267,7 @@ class CameraCollector:
         self.rgbd_width = config['camera']['rgbd']['width']
         self.rgbd_height = config['camera']['rgbd']['height']
         self.rgbd_frame_rate = config['camera']['rgbd']['frame_rate']
-   
+
         rs_config = rs.config()
         rs_config.enable_stream(
             rs.stream.depth, self.rgbd_width, self.rgbd_height, rs.format.z16, self.rgbd_frame_rate
@@ -275,10 +288,10 @@ class CameraCollector:
             result, _ = self.usb_camera.read()
             if not result:
                 raise RuntimeError('USB camera warmup failed')
-            
+
         self.resize_width = config['camera']['resize']['width']
         self.resize_height = config['camera']['resize']['height']
-        
+
         print('Camera initialized')
 
     def shot(self) -> CameraFrame:
@@ -287,24 +300,24 @@ class CameraCollector:
         color_frame = frames.get_color_frame()
 
         rgbd_depth = cv2.resize(
-            np.asarray(depth_frame.get_data()), 
+            np.asarray(depth_frame.get_data()),
             (self.resize_width, self.resize_height)
         )
         rgbd_color = cv2.resize(
-            np.asarray(color_frame.get_data()), 
+            np.asarray(color_frame.get_data()),
             (self.resize_width, self.resize_height)
         )
-        
+
         result, usb_frame = self.usb_camera.read()
         if not result:
             raise RuntimeError('USB camera read failed')
-        
+
         return {
             'rgbd_depth': rgbd_depth,
             'rgbd_color': rgbd_color,
             'usb_image': usb_frame
         }
-    
+
     def release(self):
         self.rgbd_camera.stop()
         self.usb_camera.release()
@@ -317,7 +330,7 @@ class DataCollector(Process):
     camera_collector: CameraCollector
 
     def __init__(
-        self, 
+        self,
         record_queue: Queue[RobotCommand],
         save_path: str
     ):
@@ -370,7 +383,7 @@ class DataCollector(Process):
 
         finally:
             self.camera_collector.release()
-            
+
 
 class ReplayFeeder(Process):
     dataset_path: str
@@ -382,12 +395,12 @@ class ReplayFeeder(Process):
         self.command_queue = command_queue
         self.dataset_path = dataset_path
         self.npy_files = []
-        
+
         for file in os.listdir(dataset_path):
             if file.endswith('.npy'):
                 self.npy_files.append(file)
         self.npy_files.sort(key=lambda x: int(x.split('.')[0]))
-    
+
     def __iter__(self) -> Iterator[tuple[RobotCommand, CameraFrame]]:
         for file in self.npy_files:
             file_path = os.path.join(self.dataset_path, file)
@@ -395,15 +408,16 @@ class ReplayFeeder(Process):
             if load_result is None:
                 print(f'Failed to load {file_path}')
                 continue
-            
+
             robot_state, camera_frame = load_result
             yield (robot_state, camera_frame)
-    
+
     @overload
     def run(self):
         for robot_state, camera_frame in self:
             robot_state['command_type'] = 'move'
             self.command_queue.put(robot_state)
+
 
 if __name__ == '__main__':
     logger_init()
@@ -421,10 +435,10 @@ if __name__ == '__main__':
     except Exception as e:
         print(f'Failed to initialize arm controller: {e}')
         exit(1)
-    
+
     try:
         replay_feeder.start()
         data_collector.start()
-        robot_controller.start()   
+        robot_controller.start()
     except KeyboardInterrupt:
         print("Exit")
