@@ -425,6 +425,9 @@ class ReplayFeeder(Process):
         except KeyboardInterrupt:
             pass
 
+# Read the robot state from the record queue and generate a new command, see RobotCommand for details
+def model(robot_state: RobotCommand) -> RobotCommand: ...
+
 
 if __name__ == '__main__':
     logger_init()
@@ -434,8 +437,8 @@ if __name__ == '__main__':
     command_queue: Queue[RobotCommand] = Queue()
     record_queue: Queue[RobotCommand] = Queue()
 
-    replay_feeder = ReplayFeeder(command_queue, replay_path)
-    data_collector = DataCollector(record_queue, save_path)
+    # replay_feeder = ReplayFeeder(command_queue, replay_path)
+    # data_collector = DataCollector(record_queue, save_path)
 
     try:
         robot_controller = RobotController(command_queue, record_queue)
@@ -443,15 +446,25 @@ if __name__ == '__main__':
         print(f'Failed to initialize arm controller: {e}')
         exit(1)
 
-    replay_feeder.start()
-    data_collector.start()
-    robot_controller.start()
+    # replay_feeder.start()
+    # data_collector.start()
+    # robot_controller.start()
     
-    try:
-        replay_feeder.join()
-        print('Replay feeder finished')
+    # try:
+    #     replay_feeder.join()
+    #     print('Replay feeder finished')
         
-        data_collector.join()
-        robot_controller.join()
+    #     data_collector.join()
+    #     robot_controller.join()
+    # except KeyboardInterrupt:
+    #     print("Exit")
+    try:
+        while True:
+            if not record_queue.empty():
+                robot_state = record_queue.get()
+                command_queue.put(model(robot_state))
     except KeyboardInterrupt:
         print("Exit")
+        command_queue.put({'command_type': 'shutdown'})
+        robot_controller.join()
+        
