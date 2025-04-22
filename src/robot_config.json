@@ -1,7 +1,8 @@
 {
     "path": {
         "replay": "data/replay",
-        "record": "data/record"
+        "record": "data/record",
+        "save": "data/save"
     },
     "arm": {
         "ip": "192.168.1.41",
@@ -15,7 +16,7 @@
     },
     "gripper": {
         "port": "/dev/ttyUSB0",
-        "baud_rate": 115200,
+        "baudrate": 115200,
         "slave_id": 9,
         "max_position": 255.0
     },
