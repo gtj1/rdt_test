@@ -5,12 +5,14 @@ import os
 import fnmatch
 import json
 import re
+import shutil
 
 import h5py
 import yaml
 import cv2
 import numpy as np
 
+from scipy.spatial.transform import Rotation as R
 from configs.state_vec import STATE_VEC_IDX_MAPPING
 
 class HDF5VLADataset:
@@ -43,35 +45,127 @@ class HDF5VLADataset:
         expected_range = range(min(indices), max(indices) + 1)
         if len(set(indices)) != len(expected_range):
             return (False, "Discontinuous Indices")
+        for filename_match in matches:
+            index_str = filename_match.group(1)
+            new_index_str = f"{int(index_str)}.npy"
+            if index_str != new_index_str:
+                original_name = os.path.join(path, filename_match.group(0))
+                new_name = os.path.join(path, new_index_str)
+                os.rename(original_name, new_name)
+        poses = []
+        for index in expected_range:
+            result = np.load(os.path.join(path, f"{i}.npy")).item()
+            joint = result['arm_state']['joint_position']
+            xyz, rpy = result['arm_state']['end_effector_pose']
+            
+            
         return (True, expected_range)
         
 
     def __init__(self) -> None:
         # [Modify] The path to the HDF5 dataset directory
         # Each HDF5 file contains one episode
-        HDF5_DIR = "data/datasets/aubo_e5/rdt_data/"
+        DATA_DIR = "data/datasets/aubo_e5/rdt_data/"
         self.DATASET_NAME = "aubo"
         
-        self.file_paths = []
-        
-        for root, _, files in os.walk(HDF5_DIR):
-            for filename in fnmatch.filter(files, '*.npy'):
-                file_path = os.path.join(root, filename)
-                self.file_paths.append(file_path)
-        
-        # Load the config
+        self.record_paths = []
+        self.indices = []
+        for foldername in os.listdir(DATA_DIR):
+            folder_path = os.path.join(DATA_DIR, foldername)
+            ret, indices = self.read_npy_indices(folder_path)
+            if ret:
+                self.record_paths.append(folder_path)
+                self.indices.append(indices)
+                
         with open('configs/base.yaml', 'r') as file:
             config = yaml.safe_load(file)
         self.CHUNK_SIZE = config['common']['action_chunk_size']
         self.IMG_HISORY_SIZE = config['common']['img_history_size']
         self.STATE_DIM = config['common']['state_dim']
         
-        # Get each episode's len
         episode_lens = []
-        for file_path in self.file_paths:
-            pass
-        # To be completed
+        for file_path, indices in zip(self.record_paths, self.indices):
+            episode_lens.append(len(indices))
+        self.episode_sample_weights = np.array(episode_lens) / np.sum(episode_lens)
+    
+    def __len__(self):
+        return len(self.record_paths)
+
+    def get_dataset_name(self):
+        return self.DATASET_NAME
+    
+    def get_item(self, index: int=None, state_only=False):
+        """Get a training sample at a random timestep.
+
+        Args:
+            index (int, optional): the index of the episode.
+                If not provided, a random episode will be selected.
+            state_only (bool, optional): Whether to return only the state.
+                In this way, the sample will contain a complete trajectory rather
+                than a single timestep. Defaults to False.
+
+        Returns:
+           sample (dict): a dictionar
+        """
+        while True:
+            if index is None:
+                record_path = np.random.choice(self.record_paths, p=self.episode_sample_weights)
+            else:
+                record_path = self.record_paths[index]
+            valid, sample = self.parse_npy_file(record_path) \
+                if not state_only else self.parse_npy_file_state_only(record_path)
+            if valid:
+                return sample
+            else:
+                index = np.random.randint(0, len(self.record_paths))
+    
+    def parse_npy_file(self, record_path):
+        """[Modify] Parse a npy file to generate a training sample at
+            a random timestep.
+
+        Args:
+            file_path (str): the path to the npy file
+        
+        Returns:
+            valid (bool): whether the episode is valid, which is useful for filtering.
+                If False, this episode will be dropped.
+            dict: a dictionary containing the training sample,
+                {
+                    "meta": {
+                        "dataset_name": str,    # the name of your dataset.
+                        "#steps": int,          # the number of steps in the episode,
+                                                # also the total timesteps.
+                        "instruction": str      # the language instruction for this episode.
+                    },                           
+                    "step_id": int,             # the index of the sampled step,
+                                                # also the timestep t.
+                    "state": ndarray,           # state[t], (1, STATE_DIM).
+                    "state_std": ndarray,       # std(state[:]), (STATE_DIM,).
+                    "state_mean": ndarray,      # mean(state[:]), (STATE_DIM,).
+                    "state_norm": ndarray,      # norm(state[:]), (STATE_DIM,).
+                    "actions": ndarray,         # action[t:t+CHUNK_SIZE], (CHUNK_SIZE, STATE_DIM).
+                    "state_indicator", ndarray, # indicates the validness of each dim, (STATE_DIM,).
+                    "cam_high": ndarray,        # external camera image, (IMG_HISORY_SIZE, H, W, 3)
+                                                # or (IMG_HISORY_SIZE, 0, 0, 0) if unavailable.
+                    "cam_high_mask": ndarray,   # indicates the validness of each timestep, (IMG_HISORY_SIZE,) boolean array.
+                                                # For the first IMAGE_HISTORY_SIZE-1 timesteps, the mask should be False.
+                    "cam_left_wrist": ndarray,  # left wrist camera image, (IMG_HISORY_SIZE, H, W, 3).
+                                                # or (IMG_HISORY_SIZE, 0, 0, 0) if unavailable.
+                    "cam_left_wrist_mask": ndarray,
+                    "cam_right_wrist": ndarray, # right wrist camera image, (IMG_HISORY_SIZE, H, W, 3).
+                                                # or (IMG_HISORY_SIZE, 0, 0, 0) if unavailable.
+                                                # If only one wrist, make it right wrist, plz.
+                    "cam_right_wrist_mask": ndarray
+                } or None if the episode is invalid.
+        """
+        ret, indices = self.read_npy_indices(record_path)
+        if not ret:
+            return False, None
         pass
+        
+    
+    def parse_npy_file_state_only(self, file_path): ...
+        
         
 class HDF5VLADataset:
     """
