@@ -11,7 +11,7 @@ import pyrealsense2 as rs
 from jodellSdk.jodellSdkDemo import RgClawControl
 from robotcontrol import Auboi5Robot, RobotErrorType, logger_init
 
-with open('robot_config.json', 'r', encoding='utf-8') as f:
+with open('src/robot_config.json', 'r', encoding='utf-8') as f:
     config = json.load(f)
 
 Pose: TypeAlias = tuple[np.ndarray, np.ndarray]  # xyz in m, rpy in rad
@@ -57,14 +57,14 @@ class RobotController(Process):
     gripper_slave_id: int
     gripper_max_position: float
 
-    command_queue: Queue[RobotCommand]
-    record_queue: Queue[RobotCommand]
+    command_queue: Queue
+    record_queue: Queue
     running: bool
 
     def __init__(
         self,
-        command_queue: Queue[RobotCommand],
-        record_queue: Queue[RobotCommand]
+        command_queue: Queue,
+        record_queue: Queue
     ):
         super().__init__()
         self.command_queue = command_queue
@@ -107,7 +107,7 @@ class RobotController(Process):
 
         result = self.gripper.serialOperation(
             com=self.gripper_port,
-            baudrate=self.gripper_baudrate,
+            baudRate=self.gripper_baudrate,
             state=True  # open
         )
         if result != 1:
@@ -326,12 +326,12 @@ class CameraCollector:
 class DataCollector(Process):
     save_path: str
     index: int = 0
-    record_queue: Queue[RobotCommand]
+    record_queue: Queue
     camera_collector: CameraCollector
 
     def __init__(
         self,
-        record_queue: Queue[RobotCommand],
+        record_queue: Queue,
         save_path: str
     ):
         super().__init__()
@@ -388,9 +388,9 @@ class DataCollector(Process):
 class ReplayFeeder(Process):
     dataset_path: str
     npy_files: list[str]
-    command_queue: Queue[RobotCommand]
+    command_queue: Queue
 
-    def __init__(self, command_queue: Queue[RobotCommand], dataset_path: str):
+    def __init__(self, command_queue: Queue, dataset_path: str):
         super().__init__()
         self.command_queue = command_queue
         self.dataset_path = dataset_path
@@ -434,8 +434,8 @@ if __name__ == '__main__':
     replay_path = config['path']['replay']
     save_path = config['path']['save']
 
-    command_queue: Queue[RobotCommand] = Queue()
-    record_queue: Queue[RobotCommand] = Queue()
+    command_queue: Queue = Queue()
+    record_queue: Queue = Queue()
 
     # replay_feeder = ReplayFeeder(command_queue, replay_path)
     # data_collector = DataCollector(record_queue, save_path)
@@ -458,6 +458,7 @@ if __name__ == '__main__':
     #     robot_controller.join()
     # except KeyboardInterrupt:
     #     print("Exit")
+    robot_controller.run()
     try:
         while True:
             if not record_queue.empty():
