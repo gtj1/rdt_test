@@ -11,7 +11,7 @@ import pyrealsense2 as rs
 from jodellSdk.jodellSdkDemo import RgClawControl
 from robotcontrol import Auboi5Robot, RobotErrorType, logger_init
 
-with open('config.json', 'r', encoding='utf-8') as f:
+with open('robot_config.json', 'r', encoding='utf-8') as f:
     config = json.load(f)
 
 Pose: TypeAlias = tuple[np.ndarray, np.ndarray]  # xyz in m, rpy in rad
@@ -414,9 +414,16 @@ class ReplayFeeder(Process):
 
     @overload
     def run(self):
-        for robot_state, camera_frame in self:
-            robot_state['command_type'] = 'move'
-            self.command_queue.put(robot_state)
+        try:
+            start_time = time.time()
+            for robot_state, camera_frame in self:
+                robot_state['command_type'] = 'move'
+                self.command_queue.put(robot_state)
+                elapsed_time = time.time() - start_time
+                time.sleep(1 / config['camera']['rgbd']['frame_rate'])
+                start_time = time.time()
+        except KeyboardInterrupt:
+            pass
 
 
 if __name__ == '__main__':
@@ -424,8 +431,8 @@ if __name__ == '__main__':
     replay_path = config['path']['replay']
     save_path = config['path']['save']
 
-    command_queue = Queue()
-    record_queue = Queue()
+    command_queue: Queue[RobotCommand] = Queue()
+    record_queue: Queue[RobotCommand] = Queue()
 
     replay_feeder = ReplayFeeder(command_queue, replay_path)
     data_collector = DataCollector(record_queue, save_path)
@@ -436,9 +443,15 @@ if __name__ == '__main__':
         print(f'Failed to initialize arm controller: {e}')
         exit(1)
 
+    replay_feeder.start()
+    data_collector.start()
+    robot_controller.start()
+    
     try:
-        replay_feeder.start()
-        data_collector.start()
-        robot_controller.start()
+        replay_feeder.join()
+        print('Replay feeder finished')
+        
+        data_collector.join()
+        robot_controller.join()
     except KeyboardInterrupt:
         print("Exit")
