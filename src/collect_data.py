@@ -30,10 +30,15 @@ class GripperState(TypedDict):
 
 
 class RobotCommand(TypedDict):
-    command_type: Literal['record', 'move', 'shutdown']
+    command_type: Literal['state', 'move', 'shutdown']
     # The following fields are only used when command_type is not 'shutdown'
     arm_state: ArmState | None
     gripper_state: GripperState | None
+
+
+class RobotRecord(TypedDict):
+    state: RobotCommand
+    action: RobotCommand
 
 
 class CameraFrame(TypedDict):
@@ -61,6 +66,8 @@ class RobotController(Process):
     record_queue: Queue
     running: bool
 
+    last_command: RobotCommand
+
     def __init__(
         self,
         command_queue: Queue,
@@ -69,6 +76,7 @@ class RobotController(Process):
         super().__init__()
         self.command_queue = command_queue
         self.record_queue = record_queue
+        self.last_command = None
 
     def connect_to_arm(self):
         self.arm_ip = config['arm']['ip']
@@ -162,6 +170,7 @@ class RobotController(Process):
             if end_effector_pose is None or gripper_state is None:
                 raise ValueError(
                     'Pose and gripper state must be provided for move command')
+            self.last_command = command
             return self.arm_move_to(end_effector_pose) and self.gripper_move_to(gripper_state)
         elif command_type == 'shutdown':
             self.running = False
@@ -178,7 +187,7 @@ class RobotController(Process):
     def check_command_queue(self) -> bool:
         if self.command_queue.empty():
             return
-        command = self.command_queue.get()
+        command: RobotCommand = self.command_queue.get()
         self.execute(command)
 
     def get_arm_state(self) -> ArmState | None:
@@ -224,8 +233,23 @@ class RobotController(Process):
         if arm_state is None or gripper_state is None:
             return False
 
+        robot_record: RobotRecord = {}
+        robot_record['state'] = {
+            'command_type': 'state',
+            'arm_state': arm_state,
+            'gripper_state': gripper_state
+        }
+        if self.last_command is not None:
+            robot_record['action'] = self.last_command
+        else:
+            robot_record['action'] = {
+                'command_type': 'command',
+                'arm_state': arm_state,
+                'gripper_state': gripper_state
+            }
+
         self.record_queue.put({
-            'command_type': 'record',
+            'command_type': 'state',
             'arm_state': arm_state,
             'gripper_state': gripper_state
         })
@@ -345,14 +369,17 @@ class DataCollector(Process):
 
     def save(
         self,
-        robot_state: RobotCommand,
+        robot_record: RobotRecord,
         camera_frame: CameraFrame,
     ):
-        assert robot_state['command_type'] == 'record'
+        assert robot_record['command_type'] == 'state'
 
         np.save(
-            f'{self.save_path}/{self.index}.npy',
-            (robot_state, camera_frame),
+            os.path.join(self.save_path, f'{self.index}.npy'),
+            {
+                'robot_record': robot_record,
+                'camera_frame': camera_frame,
+            },
             allow_pickle=True
         )
         self.index += 1
@@ -364,15 +391,16 @@ class DataCollector(Process):
         try:
             while True:
                 start_time = time.time()
-                robot_state = None
+                robot_record = None
 
                 while not self.record_queue.empty():
-                    latest = self.record_queue.get()
-                    if latest['command_type'] == 'record':
-                        robot_state = latest
+                    latest: RobotRecord = self.record_queue.get()
+                    assert latest['state']['command_type'] == 'state' and \
+                        latest['action']['command_type'] == 'command'
+                    robot_record = latest
                 camera_frame = self.camera_collector.shot()
-                if robot_state:
-                    self.save(robot_state, camera_frame)
+                if robot_record:
+                    self.save(robot_record, camera_frame)
 
                 elapsed_time = time.time() - start_time
                 if elapsed_time < dt:
