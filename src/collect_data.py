@@ -490,8 +490,8 @@ if __name__ == '__main__':
     try:
         while True:
             if not record_queue.empty():
-                robot_state = record_queue.get()
-                command_queue.put(model(robot_state))
+                robot_record: RobotRecord = record_queue.get()
+                command_queue.put(model(robot_record['state']))
     except KeyboardInterrupt:
         print("Exit")
         command_queue.put({'command_type': 'shutdown'})
