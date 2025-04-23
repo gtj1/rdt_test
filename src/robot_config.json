@@ -53,25 +53,25 @@
             },
             "z": {
                 "type": "axis",
-                "id": 3,
+                "id": 4,
                 "scale": -0.02
             },
             "roll": {
                 "type": "hat",
                 "id": 0,
                 "index": 0,
-                "scale": 0.08
+                "scale": 0.01
             },
             "pitch": {
                 "type": "hat",
                 "id": 0,
                 "index": 1,
-                "scale": 0.08
+                "scale": 0.01
             },
             "yaw": {
                 "type": "axis",
-                "id": 2,
-                "scale": 0.08
+                "id": 3,
+                "scale": 0.01
             }
         }
     }

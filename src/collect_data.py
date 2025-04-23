@@ -144,7 +144,7 @@ class RobotController(Process):
     def arm_move_to(self, end_effector_pose: Pose) -> bool:
         xyz, rpy = end_effector_pose
         try:
-            self.arm.move_to_target_in_cartesian(xyz, rpy)
+            self.arm.move_to_target_in_cartesian(xyz, rpy * 180 / np.pi)
             return True
         except Exception as e:
             print(f'Failed to move arm to {end_effector_pose}: {e}')
@@ -189,6 +189,12 @@ class RobotController(Process):
         if self.arm.connected:
             self.arm.disconnect()
             self.arm.uninitialize()
+        self.gripper.enableClamp(self.gripper_slave_id, False)
+        self.gripper.serialOperation(
+            com=self.gripper_port,
+            baudRate=self.gripper_baudrate,
+            state=False  # close
+        )
         print(f'{self.arm_name} controller shutdown')
 
     def check_command_queue(self) -> bool:
@@ -278,6 +284,7 @@ class RobotController(Process):
             print(f'Exception in {self.arm_name} thread: {e}')
         finally:
             self.release()
+            print("Robot controller process exit")
 
 
 class CameraCollector:
@@ -391,7 +398,7 @@ class DataCollector(Process):
         )
         self.index += 1
 
-    @overload
+    
     def run(self) -> None:
         self.camera_collector = CameraCollector()
         dt = 1 / config['camera']['rgbd']['frame_rate']
@@ -414,7 +421,7 @@ class DataCollector(Process):
                 if elapsed_time < dt:
                     time.sleep(dt - elapsed_time)
 
-        except KeyboardInterrupt:
+        except Exception as e:
             pass
 
         finally:
@@ -448,7 +455,6 @@ class ReplayFeeder(Process):
             robot_state, camera_frame = load_result
             yield (robot_state, camera_frame)
 
-    @overload
     def run(self):
         try:
             start_time = time.time()
@@ -520,6 +526,7 @@ class JoystickFeeder(Process):
 
     def process_state(self) -> RobotCommand | None:
         input_state = {}
+        pygame.event.pump()
         for input_name in self.mapping.keys():
             input_state[input_name] = self.get_input_state(input_name)
         if all(v == 0 for v in input_state.values()):
@@ -529,6 +536,8 @@ class JoystickFeeder(Process):
         if robot_state is None:
             self.last_command_time = time.time()
             return None
+        # robot_state['command_type'] = 'move'
+        # return robot_state
         if robot_state['command_type'] != 'state':
             raise ValueError(
                 f'Invalid command type in state queue: {robot_state["command_type"]}'
@@ -543,6 +552,9 @@ class JoystickFeeder(Process):
         xyz = xyz.copy()
         rpy = rpy.copy()
         dt = time.time() - self.last_command_time
+        with open("logfiles/input_state.txt", "a+") as f:
+            f.write(f"{self.last_command_time}: " + str(input_state) + "\n")
+        print("dt:", dt)
         xyz += np.array([
             input_state['x'], input_state['y'], input_state['z']
         ]) * dt
@@ -554,16 +566,15 @@ class JoystickFeeder(Process):
             'joint_position': arm_state['joint_position'],
             'end_effector_pose': (xyz, rpy)
         }
+        robot_state['gripper_state']['gripper_position'] = 1.0
         robot_command = {
             'command_type': 'move',
             'arm_state': new_arm_state,
-            'gripper_state': arm_state['gripper_state']
+            'gripper_state': robot_state['gripper_state']
         }
         self.last_command_time = time.time()
         return robot_command
         
-    
-    @overload
     def run(self) -> None:
         try:
             while True:
@@ -573,11 +584,13 @@ class JoystickFeeder(Process):
                 time.sleep(self.polling_interval)
         except KeyboardInterrupt:
             pass
-        except Exception as e:
-            print(f'Exception in joystick feeder: {e}')
+        # except Exception as e:
+        #     print(type(e))
+        #     print(f'Exception in joystick feeder: {e}')
         finally:
             pygame.quit()
-            print('Joystick feeder stopped')
+            command_queue.put({'command_type': 'shutdown'})
+            print('Joystick feeder process exit')
                 
     
 
@@ -609,10 +622,11 @@ if __name__ == '__main__':
     
     try:
         while True:
-            time.sleep(0.1)
-            # robot_record: RobotRecord = record_queue.get()
-            # command_queue.put(model(robot_record['state']))
-    except KeyboardInterrupt:
+            robot_controller.join()
+            joystick_feeder.join()
+    except:
+        pass
+    finally:
         print("Exit")
         command_queue.put({'command_type': 'shutdown'})
         robot_controller.join()
