@@ -57,7 +57,7 @@ class HDF5VLADataset:
             state = result['state']
             joint = state['arm_state']['joint_position']
             xyz, rpy = state['arm_state']['end_effector_pose']
-            rotation_matrix = R.from_euler('xyz', rpy).as_matrix()
+            rotation_matrix = R.from_euler('xyz', rpy, degrees=True).as_matrix()
             ortho6d = rotation_matrix[:, :2].transpose().flatten()
             gripper_position = [state['gripper_state']['position'] / 255.0]
             state_vec = np.concatenate([joint, xyz, ortho6d, gripper_position])
@@ -66,7 +66,7 @@ class HDF5VLADataset:
             action = result['action']
             joint = action['arm_action']['joint_position']
             xyz, rpy = action['arm_action']['end_effector_pose']
-            rotation_matrix = R.from_euler('xyz', rpy).as_matrix()
+            rotation_matrix = R.from_euler('xyz', rpy, degrees=True).as_matrix()
             ortho6d = rotation_matrix[:, :2].transpose().flatten()
             gripper_position = [action['gripper_action']['position'] / 255.0]
             action_vec = np.concatenate([joint, xyz, ortho6d, gripper_position])

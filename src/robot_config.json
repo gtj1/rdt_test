@@ -35,5 +35,44 @@
             "width": 320,
             "height": 256
         }
+    },
+    "joystick": {
+        "id": 0,
+        "deadzone": 0.2,
+        "polling_interval": 0.01,
+        "mapping": {
+            "x": {
+                "type": "axis",
+                "id": 0,
+                "scale": 0.02
+            },
+            "y": {
+                "type": "axis",
+                "id": 1,
+                "scale": 0.02
+            },
+            "z": {
+                "type": "axis",
+                "id": 3,
+                "scale": -0.02
+            },
+            "roll": {
+                "type": "hat",
+                "id": 0,
+                "index": 0,
+                "scale": 0.08
+            },
+            "pitch": {
+                "type": "hat",
+                "id": 0,
+                "index": 1,
+                "scale": 0.08
+            },
+            "yaw": {
+                "type": "axis",
+                "id": 2,
+                "scale": 0.08
+            }
+        }
     }
 }

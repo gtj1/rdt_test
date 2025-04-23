@@ -3,6 +3,7 @@ import os
 import cv2
 import json
 import numpy as np
+import pygame
 from dataclasses import dataclass
 from typing import TypedDict, Literal, TypeAlias, Iterator, overload
 from multiprocessing import Process, Queue
@@ -14,7 +15,7 @@ from robotcontrol import Auboi5Robot, RobotErrorType, logger_init
 with open('src/robot_config.json', 'r', encoding='utf-8') as f:
     config = json.load(f)
 
-Pose: TypeAlias = tuple[np.ndarray, np.ndarray]  # xyz in m, rpy in rad
+Pose: TypeAlias = tuple[np.ndarray, np.ndarray]  # xyz in m, rpy in degree
 
 
 class ArmState(TypedDict):
@@ -47,6 +48,12 @@ class CameraFrame(TypedDict):
     usb_image: np.ndarray
 
 
+class JoystickInputInfo(TypedDict):
+    type: Literal['axis', 'button', 'hat', 'ball']
+    id: int
+    index: int | None
+    scale: float
+
 RecordFrame: TypeAlias = tuple[RobotCommand, CameraFrame]
 
 
@@ -62,8 +69,8 @@ class RobotController(Process):
     gripper_slave_id: int
     gripper_max_position: float
 
-    command_queue: Queue
-    record_queue: Queue
+    command_queue: Queue # type: Queue[RobotCommand]
+    record_queue: Queue # type: Queue[RobotRecord]
     running: bool
 
     last_command: RobotCommand
@@ -350,7 +357,7 @@ class CameraCollector:
 class DataCollector(Process):
     save_path: str
     index: int = 0
-    record_queue: Queue
+    record_queue: Queue # type: Queue[RobotRecord]
     camera_collector: CameraCollector
 
     def __init__(
@@ -393,6 +400,7 @@ class DataCollector(Process):
                 start_time = time.time()
                 robot_record = None
 
+                # Get latest record from the queue
                 while not self.record_queue.empty():
                     latest: RobotRecord = self.record_queue.get()
                     assert latest['state']['command_type'] == 'state' and \
@@ -416,7 +424,7 @@ class DataCollector(Process):
 class ReplayFeeder(Process):
     dataset_path: str
     npy_files: list[str]
-    command_queue: Queue
+    command_queue: Queue # type: Queue[RobotCommand]
 
     def __init__(self, command_queue: Queue, dataset_path: str):
         super().__init__()
@@ -452,6 +460,126 @@ class ReplayFeeder(Process):
                 start_time = time.time()
         except KeyboardInterrupt:
             pass
+        
+
+class JoystickFeeder(Process):
+    last_command_time: float
+    joystick: pygame.joystick.JoystickType
+    state_queue: Queue # type: Queue[RobotCommand]
+    command_queue: Queue # type: Queue[RobotCommand]
+    deadzone: float
+    mapping: dict[str, JoystickInputInfo]
+    polling_interval: float
+    
+    def __init__(self, state_queue: Queue, command_queue: Queue):
+        super().__init__()
+        self.state_queue = state_queue
+        self.command_queue = command_queue
+        
+        pygame.init()
+        pygame.joystick.init()
+        if pygame.joystick.get_count() == 0:
+            raise RuntimeError('No joystick found')
+        self.joystick = pygame.joystick.Joystick(0)
+        self.joystick.init()
+        self.deadzone = config['joystick']['deadzone']
+        self.mapping = config['joystick']['mapping']
+        self.last_command_time = time.time()
+        self.polling_interval = config['joystick']['polling_interval']
+
+    def apply_deadzone(self, value: float) -> float:
+        if abs(value) < self.deadzone:
+            return 0.0
+        return value
+    
+    def get_input_state(self, input_name: str) -> float:
+        input_info = self.mapping[input_name]
+        if input_info['type'] == 'axis':
+            value = self.joystick.get_axis(input_info['id'])
+        elif input_info['type'] == 'button':
+            value = self.joystick.get_button(input_info['id'])
+        elif input_info['type'] == 'hat':
+            value = self.joystick.get_hat(input_info['id'])[input_info['index']]
+        elif input_info['type'] == 'ball':
+            raise NotImplementedError('Ball input not supported')
+        else:
+            raise ValueError(f'Unknown input type: {input_info["type"]}')
+        return self.apply_deadzone(value) * input_info['scale']
+    
+    def get_robot_state(self) -> RobotCommand | None:
+        robot_state: RobotCommand = None
+        while not self.state_queue.empty():
+            latest_robot_state: RobotCommand = self.state_queue.get()
+            if latest_robot_state['command_type'] == 'state':
+                robot_state = latest_robot_state
+            # else:
+            #     raise ValueError(
+            #         f'Invalid command type in state queue: {latest_robot_state["command_type"]}'
+            #     )
+        return robot_state
+
+    def process_state(self) -> RobotCommand | None:
+        input_state = {}
+        for input_name in self.mapping.keys():
+            input_state[input_name] = self.get_input_state(input_name)
+        if all(v == 0 for v in input_state.values()):
+            self.last_command_time = time.time()
+            return None
+        robot_state = self.get_robot_state()
+        if robot_state is None:
+            self.last_command_time = time.time()
+            return None
+        if robot_state['command_type'] != 'state':
+            raise ValueError(
+                f'Invalid command type in state queue: {robot_state["command_type"]}'
+            )
+        if robot_state['arm_state'] is None or robot_state['gripper_state'] is None:
+            raise ValueError(
+                'Arm state and gripper state must be provided in state queue'
+            )
+        arm_state = robot_state['arm_state']
+        end_effector_pose = arm_state['end_effector_pose']
+        xyz, rpy = end_effector_pose
+        xyz = xyz.copy()
+        rpy = rpy.copy()
+        dt = time.time() - self.last_command_time
+        xyz += np.array([
+            input_state['x'], input_state['y'], input_state['z']
+        ]) * dt
+        rpy += np.array([
+            input_state['roll'], input_state['pitch'], input_state['yaw']
+        ]) * dt
+        new_arm_state = {
+            'arm_name': arm_state['arm_name'],
+            'joint_position': arm_state['joint_position'],
+            'end_effector_pose': (xyz, rpy)
+        }
+        robot_command = {
+            'command_type': 'move',
+            'arm_state': new_arm_state,
+            'gripper_state': arm_state['gripper_state']
+        }
+        self.last_command_time = time.time()
+        return robot_command
+        
+    
+    @overload
+    def run(self) -> None:
+        try:
+            while True:
+                robot_command = self.process_state()
+                if robot_command is not None:
+                    self.command_queue.put(robot_command)
+                time.sleep(self.polling_interval)
+        except KeyboardInterrupt:
+            pass
+        except Exception as e:
+            print(f'Exception in joystick feeder: {e}')
+        finally:
+            pygame.quit()
+            print('Joystick feeder stopped')
+                
+    
 
 # Read the robot state from the record queue and generate a new command, see RobotCommand for details
 def model(robot_state: RobotCommand) -> RobotCommand: ...
@@ -474,24 +602,16 @@ if __name__ == '__main__':
         print(f'Failed to initialize arm controller: {e}')
         exit(1)
 
-    # replay_feeder.start()
-    # data_collector.start()
-    # robot_controller.start()
+    joystick_feeder = JoystickFeeder(record_queue, command_queue)
     
-    # try:
-    #     replay_feeder.join()
-    #     print('Replay feeder finished')
-        
-    #     data_collector.join()
-    #     robot_controller.join()
-    # except KeyboardInterrupt:
-    #     print("Exit")
-    robot_controller.run()
+    robot_controller.start()
+    joystick_feeder.start()
+    
     try:
         while True:
-            if not record_queue.empty():
-                robot_record: RobotRecord = record_queue.get()
-                command_queue.put(model(robot_record['state']))
+            time.sleep(0.1)
+            # robot_record: RobotRecord = record_queue.get()
+            # command_queue.put(model(robot_record['state']))
     except KeyboardInterrupt:
         print("Exit")
         command_queue.put({'command_type': 'shutdown'})
