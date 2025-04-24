@@ -144,7 +144,7 @@ class RobotController(Process):
     def arm_move_to(self, end_effector_pose: Pose) -> bool:
         xyz, rpy = end_effector_pose
         try:
-            self.arm.move_to_target_in_cartesian(xyz, rpy * 180 / np.pi)
+            self.arm.move_to_target_in_cartesian(xyz, np.degrees(rpy))
             return True
         except Exception as e:
             print(f'Failed to move arm to {end_effector_pose}: {e}')
@@ -159,10 +159,10 @@ class RobotController(Process):
             return False
         try:
             self.gripper.runWithParam(
-                slaveId=self.gripper_slave_id,
-                pos=position,
-                speed=speed,
-                torque=torque
+                self.gripper_slave_id,
+                position,
+                speed,
+                torque
             )
             return True
         except Exception as e:
@@ -280,6 +280,8 @@ class RobotController(Process):
             while self.running:
                 self.loop()
                 time.sleep(0.1)
+        except KeyboardInterrupt:
+            pass
         except Exception as e:
             print(f'Exception in {self.arm_name} thread: {e}')
         finally:
@@ -551,10 +553,9 @@ class JoystickFeeder(Process):
         xyz, rpy = end_effector_pose
         xyz = xyz.copy()
         rpy = rpy.copy()
-        dt = time.time() - self.last_command_time
-        with open("logfiles/input_state.txt", "a+") as f:
-            f.write(f"{self.last_command_time}: " + str(input_state) + "\n")
-        print("dt:", dt)
+        # dt = time.time() - self.last_command_time
+        dt = 1
+        # print(xyz, rpy, dt, input_state)
         xyz += np.array([
             input_state['x'], input_state['y'], input_state['z']
         ]) * dt
@@ -573,6 +574,7 @@ class JoystickFeeder(Process):
             'gripper_state': robot_state['gripper_state']
         }
         self.last_command_time = time.time()
+        print(time.time(), robot_command['arm_state'])
         return robot_command
         
     def run(self) -> None:
@@ -621,13 +623,13 @@ if __name__ == '__main__':
     joystick_feeder.start()
     
     try:
-        while True:
-            robot_controller.join()
-            joystick_feeder.join()
-    except:
-        pass
-    finally:
-        print("Exit")
-        command_queue.put({'command_type': 'shutdown'})
         robot_controller.join()
+        joystick_feeder.join()
+        while True:
+            time.sleep(1)
+    except:
+        command_queue.put({'command_type': 'shutdown'})
+    finally:
+        time.sleep(1)
+        print("Main process exit")
         
