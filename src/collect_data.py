@@ -599,6 +599,50 @@ class JoystickFeeder(Process):
 # Read the robot state from the record queue and generate a new command, see RobotCommand for details
 def model(robot_state: RobotCommand) -> RobotCommand: ...
 
+command0 = lambda: {
+    'command_type': 'move',
+    'arm_state': {
+        'end_effector_pose': (
+            np.array([-0.2,  0.47,  0.12]), 
+            np.array([-2.4, -0.3,  1.57])
+        )
+    },
+    'gripper_state': {
+        'position': 120,
+        'speed': 100,
+        'torque': 30
+    }
+}
+
+command1 = lambda: {
+    'command_type': 'move',
+    'arm_state': {
+        'end_effector_pose': (
+            np.array([-0.2,  0.46,  0.12]) + np.clip(np.random.normal(size=3) * [0.01, 0, 0.01], -0.02, 0.02), 
+            np.array([-2.2, -0.3,  1.57])
+        )
+    },
+    'gripper_state': {
+        'position': 150,
+        'speed': 100,
+        'torque': 30
+    }
+}
+
+command2 = lambda: {
+    'command_type': 'move',
+    'arm_state': {
+        'end_effector_pose': (
+            np.array([-0.2,  0.49,  0.12]), 
+            np.array([-2.2, -0.3,  1.57])
+        )
+    },
+    'gripper_state': {
+        'position': 140,
+        'speed': 100,
+        'torque': 30
+    }
+}
 
 if __name__ == '__main__':
     logger_init()
@@ -611,20 +655,37 @@ if __name__ == '__main__':
     # replay_feeder = ReplayFeeder(command_queue, replay_path)
     # data_collector = DataCollector(record_queue, save_path)
 
+    print('Start collecting data...')
+
     try:
         robot_controller = RobotController(command_queue, record_queue)
+        robot_controller.start()
+        robot_record = record_queue.get()
+        print("command")
+        command_queue.put(command1())
+        time.sleep(5)
+        command_queue.put(command0())
+        time.sleep(15)
+        print('Robot controller started.')
+        while not record_queue.empty():
+            robot_record = record_queue.get()
+        while True:
+            robot_record = record_queue.get()
+            command_queue.put(command1())
+            robot_record = record_queue.get()
+            command_queue.put(command2())
     except Exception as e:
         print(f'Failed to initialize arm controller: {e}')
         exit(1)
 
-    joystick_feeder = JoystickFeeder(record_queue, command_queue)
+    # joystick_feeder = JoystickFeeder(record_queue, command_queue)
     
-    robot_controller.start()
-    joystick_feeder.start()
+    # robot_controller.start()
+    # joystick_feeder.start()
     
     try:
         robot_controller.join()
-        joystick_feeder.join()
+        # joystick_feeder.join()
         while True:
             time.sleep(1)
     except:
