@@ -44,44 +44,44 @@
             "x": {
                 "type": "axis",
                 "id": 0,
-                "scale": 0.08
+                "scale": 0.008
             },
             "y": {
                 "type": "axis",
                 "id": 1,
-                "scale": -0.08
+                "scale": -0.008
             },
             "z": {
                 "type": "axis",
                 "id": 4,
-                "scale": -0.08
+                "scale": -0.008
             },
             "roll": {
                 "type": "hat",
                 "id": 0,
                 "index": 1,
-                "scale": 0.2
+                "scale": 0.05
             },
             "pitch": {
                 "type": "hat",
                 "id": 0,
                 "index": 0,
-                "scale": -0.2
+                "scale": -0.05
             },
             "yaw": {
                 "type": "axis",
                 "id": 3,
-                "scale": 0.2
+                "scale": 0.05
             },
             "gripper open": {
                 "type": "axis",
                 "id": 2,
-                "scale": 0.2
+                "scale": 1.0
             },
             "gripper close": {
                 "type": "axis",
                 "id": 5,
-                "scale": -0.2
+                "scale": 1.0
             }
         }
     }
