@@ -6,47 +6,37 @@ import numpy as np
 import numpy.typing as npt
 import pygame
 # from dataclasses import dataclass
-from types import MethodType
-from typing import TypedDict, Literal, TypeAlias, Iterator, TypeVar, NoReturn, Any
-from multiprocessing import Process, Queue
+from typing import TypedDict, Literal, TypeAlias, Iterator, TypeVar
+from multiprocessing import Process
+
+# import a wrapped `Queue` so that it supports generic types like `Queue[RobotCommand]`
+from .refined_queue import Queue
 
 import pyrealsense2 as rs
 from jodellSdk.jodellSdkDemo import RgClawControl
-from robotcontrol import Auboi5Robot, RobotErrorType, logger_init
+from .robotcontrol import Auboi5Robot, RobotErrorType, logger_init
 
 with open('src/robot_config.json', 'r', encoding='utf-8') as f:
     config = json.load(f)
 
 T = TypeVar('T')
-Pose: TypeAlias = tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]  # xyz in m, rpy in degree
 
-if isinstance(Queue, MethodType):
-    class SubscriptableMethodProxy:
-        # Queue[T] can make an error in runtime, this wrapper can make it work
-        def __init__(self, method: MethodType):
-            # method = Queue
-            self.method = method
-        def __call__(self, *args: Any, **kwargs: Any):
-            # Call the original method to create a queue
-            return self.method(*args, **kwargs)
-        def __getitem__(self, _type: type):
-            # Actually a simple `pass` also work here
-            return f"Queue[{_type.__name__}]"
-    Queue = SubscriptableMethodProxy(Queue)
-    # This function exists only to fool the type checker so that it believes
-    # that `Queue` is not changed to something else than a class
-    def suppress_queue_type_check_error() -> NoReturn: ...
-    suppress_queue_type_check_error()
+Pose: TypeAlias = tuple[
+    tuple[float, float, float],  # xyz in m
+    tuple[float, float, float]   # rpy in radians
+]
+JointPosition: TypeAlias = tuple[float, float, float, float, float, float]
 
 class ArmState(TypedDict):
     arm_name: str
-    joint_position: list[float]
+    joint_position: JointPosition
     end_effector_pose: Pose
 
+
 class GripperState(TypedDict):
-    position: float
-    speed: float
-    torque: float
+    position: int
+    speed: int
+    torque: int
 
 
 class RobotCommand(TypedDict):
@@ -73,6 +63,7 @@ class JoystickInputInfo(TypedDict):
     index: Literal[0, 1] | None
     scale: float
 
+
 RecordFrame: TypeAlias = tuple[RobotCommand, CameraFrame]
 
 
@@ -89,7 +80,7 @@ class RobotController(Process):
     gripper_max_position: float
 
     command_queue: Queue[RobotCommand]
-    record_queue: Queue[RobotRecord]
+    record_queue: Queue[RobotRecord] | None
     running: bool
 
     last_command: RobotCommand | None
@@ -97,7 +88,7 @@ class RobotController(Process):
     def __init__(
         self,
         command_queue: Queue[RobotCommand],
-        record_queue: Queue[RobotRecord]
+        record_queue: Queue[RobotRecord] | None = None,
     ):
         super().__init__()
         self.command_queue = command_queue
@@ -159,14 +150,59 @@ class RobotController(Process):
         self.connect_to_gripper()
 
         self.running = True
+    
+    def joint_to_arm_state(self, joint_position: JointPosition) -> ArmState:
+        waypoint = self.arm.forward_kin(joint_position)
+        assert waypoint is not None
 
-    def arm_move_to(self, end_effector_pose: Pose) -> bool:
+        orientation = waypoint['ori']
+        rpy = self.arm.quaternion_to_rpy(orientation)
+        assert rpy is not None
+
+        xyz = waypoint['pos']
+
+        return ArmState(
+            arm_name=self.arm_name,
+            joint_position=joint_position,
+            end_effector_pose=(xyz, rpy)
+        )
+    
+    def pose_to_arm_state(self, end_effector_pose: Pose) -> ArmState:
+        if self.last_command is None or\
+            self.last_command['arm_state'] is None:
+            current_state = self.arm.get_current_waypoint()
+            assert current_state is not None
+            last_joint_angle = current_state['joint']
+        else:
+            last_joint_angle = self.last_command['arm_state']['joint_position']
+
         xyz, rpy = end_effector_pose
+        orientation = self.arm.rpy_to_quaternion(rpy)
+
+        assert orientation is not None
+
+        waypoint = self.arm.inverse_kin(
+            joint_radian=last_joint_angle,
+            pos=xyz,
+            ori=orientation
+        )
+
+        assert waypoint is not None
+
+        joint_position = waypoint['joint']
+
+        return ArmState(
+            arm_name=self.arm_name,
+            joint_position=joint_position,
+            end_effector_pose=(xyz, rpy)
+        )
+
+    def arm_move_to(self, joint_position: JointPosition) -> bool:
         try:
-            self.arm.move_to_target_in_cartesian(xyz, np.degrees(rpy))
+            self.arm.move_joint(joint_position)
             return True
         except Exception as e:
-            print(f'Failed to move arm to {end_effector_pose}: {e}')
+            print(f'Failed to move arm to joint angles {joint_position}: {e}')
             return False
 
     def gripper_move_to(self, gripper_state: GripperState) -> bool:
@@ -191,20 +227,29 @@ class RobotController(Process):
     def execute(self, command: RobotCommand) -> bool:
         command_type = command['command_type']
         if command_type == 'move':
-            assert command['arm_state'] is not None
-            end_effector_pose = command['arm_state']['end_effector_pose']
-            gripper_state = command['gripper_state']
-            if gripper_state is None:
+            if command['arm_state'] is None or command['gripper_state'] is None:
                 raise ValueError(
                     'Pose and gripper state must be provided for move command')
+            joint_position = command['arm_state']['joint_position']
+            end_effector_pose = command['arm_state']['end_effector_pose']
+            gripper_state = command['gripper_state']
+            # ensure that both joint_position and end_effector_pose can be used
+            if np.nan not in end_effector_pose[0]:
+                command['arm_state'] = self.pose_to_arm_state(end_effector_pose)
+            elif np.nan not in joint_position:
+                arm_state = self.joint_to_arm_state(joint_position)
+                command['arm_state'] = arm_state
+            else:
+                raise ValueError(
+                    'Either joint_position or end_effector_pose must be provided for move command')
+
             self.last_command = command
-            return self.arm_move_to(end_effector_pose) and self.gripper_move_to(gripper_state)
+            return self.arm_move_to(command['arm_state']['joint_position']) and self.gripper_move_to(gripper_state)
         elif command_type == 'shutdown':
             self.running = False
             return True
         elif command_type == 'state':
-            self.record_data()
-            return True
+            return self.record_data()
         else:
             raise ValueError(f'Unknown command type: {command_type}')
 
@@ -231,14 +276,16 @@ class RobotController(Process):
         if current_state is None:
             return None
         joint_position = current_state['joint']
-        xyz = np.array(current_state['pos'])
-        rpy = np.array(self.arm.quaternion_to_rpy(current_state['ori']))
+        xyz = current_state['pos']
+        rpy = self.arm.quaternion_to_rpy(current_state['ori'])
+        assert rpy is not None
+
         end_effector_pose = (xyz, rpy)
-        return {
-            'arm_name': self.arm_name,
-            'joint_position': joint_position,
-            'end_effector_pose': end_effector_pose
-        }
+        return ArmState(
+            arm_name=self.arm_name,
+            joint_position=joint_position,
+            end_effector_pose=end_effector_pose
+        )
 
     def get_gripper_state(self) -> GripperState | None:
         gripper_position = self.gripper.getClampCurrentLocation(
@@ -250,8 +297,18 @@ class RobotController(Process):
             return None
         gripper_speed = self.gripper.getClampCurrentSpeed(
             self.gripper_slave_id)
+        if isinstance(gripper_speed, list) and len(gripper_speed) == 1:
+            gripper_speed = gripper_speed[0]
+        else:
+            print(f'Invalid gripper speed: {gripper_speed}')
+            return None
         gripper_torque = self.gripper.getClampCurrentTorque(
             self.gripper_slave_id)
+        if isinstance(gripper_torque, list) and len(gripper_torque) == 1:
+            gripper_torque = gripper_torque[0]
+        else:
+            print(f'Invalid gripper torque: {gripper_torque}')
+            return None
 
         return {
             'position': gripper_position,
@@ -260,7 +317,7 @@ class RobotController(Process):
         }
 
     def record_data(self) -> bool:
-        if not self.running:
+        if not self.running or self.record_queue is None:
             return False
 
         arm_state = self.get_arm_state()
@@ -447,7 +504,7 @@ class DataCollector(Process):
                     time.sleep(dt - elapsed_time)
         except KeyboardInterrupt:
             pass
-        except Exception as e:
+        except Exception:
             pass
 
         finally:
@@ -592,8 +649,6 @@ class JoystickFeeder(Process):
         arm_state = robot_state['arm_state']
         end_effector_pose = arm_state['end_effector_pose']
         xyz, rpy = end_effector_pose
-        xyz = xyz.copy()
-        rpy = rpy.copy()
         dt = time.time() - self.last_command_time
         # dt = 1
         # print(xyz, rpy, dt, input_state)
@@ -603,6 +658,8 @@ class JoystickFeeder(Process):
         rpy += np.array([
             input_state['roll'], input_state['pitch'], input_state['yaw']
         ]) * dt
+        xyz = tuple(xyz.tolist())
+        rpy = tuple(rpy.tolist())
         new_arm_state = ArmState(
             arm_name=arm_state['arm_name'],
             joint_position=arm_state['joint_position'],
@@ -650,42 +707,70 @@ class JoystickFeeder(Process):
     
 
 # Read the robot state from the record queue and generate a new command, see RobotCommand for details
-def model(robot_state: RobotCommand) -> RobotCommand: ...
+def model(robot_state: RobotRecord) -> RobotCommand: ...
 
 
+# if __name__ == '__main__':
+#     logger_init()
+#     replay_path = config['path']['replay']
+#     save_path = config['path']['save']
+
+#     command_queue: Queue[RobotCommand] = Queue()
+#     record_queue: Queue[RobotRecord] = Queue()
+
+#     # replay_feeder = ReplayFeeder(command_queue, replay_path)
+#     # data_collector = DataCollector(record_queue, save_path)
+
+#     print('Start collecting data...')
+
+#     try:
+#         robot_controller = RobotController(command_queue, record_queue)
+#         robot_controller.start()
+#         time.sleep(1)
+#     except Exception as e:
+#         print(f'Failed to initialize arm controller: {e}')
+#         exit(1)
+
+#     joystick_feeder = JoystickFeeder(record_queue, command_queue)
+#     joystick_feeder.start()
+    
+#     try:
+#         while True:
+#             robot_controller.join(1)
+#             joystick_feeder.join(1)
+#     except KeyboardInterrupt:
+#         print("[INFO] Sending shutdown message")
+#         command_queue.put(RobotCommand(
+#             command_type='shutdown', arm_state=None, gripper_state=None
+#         ))
+#     finally:
+#         time.sleep(1)
+#         print("Main process exit")
+
+# a simple test of the arm controller
 if __name__ == '__main__':
     logger_init()
-    replay_path = config['path']['replay']
-    save_path = config['path']['save']
-
-    command_queue: Queue[RobotCommand] = Queue()
-    record_queue: Queue[RobotRecord] = Queue()
-
-    # replay_feeder = ReplayFeeder(command_queue, replay_path)
-    # data_collector = DataCollector(record_queue, save_path)
-
-    print('Start collecting data...')
-
+    command_queue = Queue[RobotCommand]()
+    
     try:
-        robot_controller = RobotController(command_queue, record_queue)
+        robot_controller = RobotController(command_queue)
         robot_controller.start()
-        time.sleep(1)
     except Exception as e:
         print(f'Failed to initialize arm controller: {e}')
         exit(1)
 
-    joystick_feeder = JoystickFeeder(record_queue, command_queue)
-    joystick_feeder.start()
-    
-    try:
-        while True:
-            robot_controller.join(1)
-            joystick_feeder.join(1)
-    except KeyboardInterrupt:
-        print("[INFO] Sending shutdown message")
-        command_queue.put(RobotCommand(
-            command_type='shutdown', arm_state=None, gripper_state=None
-        ))
-    finally:
-        time.sleep(1)
-        print("Main process exit")
+    arm_state = ArmState(
+        arm_name='arm',
+        joint_position=(0.541678, 0.225068, -0.948709, 0.397018, -1.570800, 0.541673),
+        end_effector_pose=((np.nan, np.nan, np.nan), (np.nan, np.nan, np.nan))
+    )
+    command = RobotCommand(
+        command_type='move', arm_state=None, gripper_state=None
+    )
+    command_queue.put(command)
+    time.sleep(10)
+    command = RobotCommand(
+        command_type='shutdown', arm_state=None, gripper_state=None)
+    command_queue.put(command)
+    robot_controller.join()
+    # command_queue.put()

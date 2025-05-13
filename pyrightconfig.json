@@ -1,0 +1,7 @@
+{
+  "exclude": [
+    "**/site-packages/**",
+    "**/lib/**"
+  ],
+  "typeCheckingMode": "strict"
+}
