@@ -37,13 +37,14 @@ class GripperState(TypedDict):
 
 
 class RobotCommand(TypedDict):
-    command_type: Literal['state', 'move', 'shutdown']
+    command_type: Literal['record', 'move', 'shutdown']
     # The following fields are only used when command_type is not 'shutdown'
     arm_state: ArmState | None
     gripper_state: GripperState | None
 
 
 class RobotRecord(TypedDict):
+    timestamp: float
     state: RobotCommand
     action: RobotCommand
 
@@ -199,8 +200,8 @@ class RobotController(Process):
 
     def arm_move_to(self, joint_position: JointPosition) -> bool:
         try:
-            print(f'Moving arm to joint angles {joint_position}')
-            self.arm.move_line(joint_position)
+            # print(f'Moving arm to joint angles {joint_position}')
+            self.arm.move_joint(joint_position, issync=False)
             return True
         except Exception as e:
             print(f'Failed to move arm to joint angles {joint_position}: {e}')
@@ -247,10 +248,10 @@ class RobotController(Process):
             move_arm = True
             # ensure that both joint_position and end_effector_pose can be used
             if self.is_valid_pose(end_effector_pose):
-                print(f"Using end effector pose {end_effector_pose}")
+                # print(f"Using end effector pose {end_effector_pose}")
                 command['arm_state'] = self.pose_to_arm_state(end_effector_pose)
             elif self.is_valid_joint_position(joint_position):
-                print("Using joint position")
+                # print("Using joint position")
                 arm_state = self.joint_to_arm_state(joint_position)
                 command['arm_state'] = arm_state
             else:
@@ -266,20 +267,20 @@ class RobotController(Process):
             self.last_command = command
             result = True
             if move_arm:
-                t1 = time.time()
+                # t1 = time.time()
                 result &= self.arm_move_to(command['arm_state']['joint_position'])
-                print(f"Arm move time: {time.time() - t1}")
+                # print(f"Arm move time: {time.time() - t1}")
             if move_gripper:
-                t2 = time.time()
+                # t2 = time.time()
                 result &= self.gripper_move_to(gripper_state)
-                print(f"Gripper move time: {time.time() - t2}")
-            print(f"Move arm: {move_arm}, move gripper: {move_gripper}")
+                # print(f"Gripper move time: {time.time() - t2}")
+            # print(f"Move arm: {move_arm}, move gripper: {move_gripper}")
             return result
         
         elif command_type == 'shutdown':
             self.running = False
             return True
-        elif command_type == 'state':
+        elif command_type == 'record':
             return self.record_data()
         else:
             raise ValueError(f'Unknown command type: {command_type}')
@@ -358,10 +359,11 @@ class RobotController(Process):
             return False
 
         robot_record_state = RobotCommand(
-            command_type='state',
+            command_type='record',
             arm_state=arm_state,
             gripper_state=gripper_state
         )
+        
         if self.last_command is not None:
             robot_record_action = self.last_command
         else:
@@ -372,10 +374,12 @@ class RobotController(Process):
             )
         
         robot_record = RobotRecord(
+            timestamp=time.time(),
             state=robot_record_state,
             action=robot_record_action
         )
 
+        # print(f"putting {robot_record}")
         self.record_queue.put(robot_record)
 
         return True

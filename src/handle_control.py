@@ -56,14 +56,14 @@ class JoystickFeeder(Process):
         if not self.state_queue.empty():
             print("[WARNING] state queue not empty")
         self.command_queue.put(
-            RobotCommand(command_type='state', arm_state=None, gripper_state=None
+            RobotCommand(command_type='record', arm_state=None, gripper_state=None
         ))
         latest_robot_record = self.state_queue.get()
         robot_state = latest_robot_record['state']
         while not self.state_queue.empty():
             latest_robot_record = self.state_queue.get()
             latest_robot_state = latest_robot_record['state']
-            if latest_robot_state['command_type'] == 'state':
+            if latest_robot_state['command_type'] == 'record':
                 robot_state = latest_robot_state
             # else:
             #     raise ValueError(
@@ -90,7 +90,7 @@ class JoystickFeeder(Process):
             return None
         # robot_state['command_type'] = 'move'
         # return robot_state
-        if robot_state['command_type'] != 'state':
+        if robot_state['command_type'] != 'record':
             raise ValueError(
                 f'Invalid command type in state queue: {robot_state["command_type"]}'
             )

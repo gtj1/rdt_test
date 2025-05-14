@@ -2,6 +2,7 @@ from core import *
 
 import os
 from typing import Iterator
+from robotcontrol import logger_init
 
 class ReplayFeeder(Process):
     dataset_path: str
@@ -44,7 +45,7 @@ class ReplayFeeder(Process):
         
 
 
-class DataCollector(Process):
+class DataRecorder(Process):
     save_path: str
     index: int = 0
     record_queue: Queue[RobotRecord]
@@ -69,7 +70,7 @@ class DataCollector(Process):
         robot_record: RobotRecord,
         camera_frame: CameraFrame,
     ):
-        assert robot_record['state']['command_type'] == 'state'
+        # assert robot_record['state']['command_type'] == 'state'
 
         np.save(
             os.path.join(self.save_path, f'{self.index}.npy'),
@@ -83,25 +84,18 @@ class DataCollector(Process):
 
     def run(self) -> None:
         self.camera_collector = CameraCollector()
-        dt = 1 / config['camera']['rgbd']['frame_rate']
         try:
             while True:
-                start_time = time.time()
-                robot_record = None
 
-                # Get latest record from the queue
-                while not self.record_queue.empty():
-                    latest: RobotRecord = self.record_queue.get()
-                    assert latest['state']['command_type'] == 'state' and \
-                        latest['action']['command_type'] == 'command'
-                    robot_record = latest
+                # Get record from the queue
+                robot_record: RobotRecord = self.record_queue.get()
+                # assert latest['state']['command_type'] == 'record' and \
+                #     latest['action']['command_type'] == 'command'
+
+                print("save")
                 camera_frame = self.camera_collector.shot()
-                if robot_record:
-                    self.save(robot_record, camera_frame)
-
-                elapsed_time = time.time() - start_time
-                if elapsed_time < dt:
-                    time.sleep(dt - elapsed_time)
+                print("shot")
+                self.save(robot_record, camera_frame)
         except KeyboardInterrupt:
             pass
         except Exception:
@@ -110,3 +104,63 @@ class DataCollector(Process):
         finally:
             self.camera_collector.release()
 
+
+
+import grasp_demo
+
+from grasp_demo import move
+
+def record():
+    grasp_demo.command_queue.put(
+        RobotCommand(
+            command_type='record',
+            arm_state=None,
+            gripper_state=None
+        )
+    )
+
+
+if __name__ == '__main__':
+    logger_init()
+    command_queue = Queue[RobotCommand]()
+    record_queue = Queue[RobotRecord]()
+
+    grasp_demo.command_queue = command_queue
+    grasp_demo.record_queue = record_queue
+
+    try:
+        grasp_demo.robot_controller = RobotController(command_queue, record_queue)
+
+        recorder = DataRecorder(record_queue, './out')
+
+        grasp_demo.robot_controller.start()
+        recorder.start()
+        time.sleep(5) # wait for the arm to initialize
+    except Exception as e:
+        print(f'Failed to initialize arm controller: {e}')
+        exit(1)
+    
+    move(end_effector_pose=((-0.36, 0.085, 0.30), (3.14, -1.0, -3.14)), gripper_position=0)
+    time.sleep(2)
+    record()
+
+    move(end_effector_pose=((-0.48, 0.085, 0.18), (3.14, -1.0, -3.14)), gripper_position=80)
+    time.sleep(2)
+    record()
+
+    move(end_effector_pose=((-0.40, 0, 0.25), (3.14, -1.0, -3.14)))
+    time.sleep(1.5)
+    record()
+
+    move(end_effector_pose=((-0.32, -0.087, 0.18), (3.14, -1.0, -3.14)), gripper_position=0)
+    time.sleep(2)
+    record()
+
+    move(end_effector_pose=((-0.32, -0.087, 0.30), (3.14, -1.0, -3.14)), gripper_position=255)
+    time.sleep(2)
+    record()
+    
+    command = RobotCommand(
+        command_type='shutdown', arm_state=None, gripper_state=None)
+    command_queue.put(command)
+    grasp_demo.robot_controller.join()

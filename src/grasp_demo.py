@@ -38,23 +38,16 @@ def move(
 if __name__ == '__main__':
     logger_init()
     command_queue = Queue[RobotCommand]()
+    record_queue: Queue[RobotRecord]
     
     try:
+        # not using the record queue for now
         robot_controller = RobotController(command_queue)
         robot_controller.start()
         time.sleep(5) # wait for the arm to initialize
     except Exception as e:
         print(f'Failed to initialize arm controller: {e}')
         exit(1)
-
-    
-
-    joint_position = robot_controller.undefined_joint_position
-    end_effector_pose = robot_controller.undefined_pose
-
-    # joint_position = (-0.2, 0.2, -1.5, -0.2, -1.6, 1.5)
-    # end_effector_pose = ((-0.48, 0.085, 0.18), (3.14, -1.0, -3.14))
-    # end_effector_pose = ((-0.32, -0.087, 0.18), (3.14, -1.0, -3.14))
     
     move(end_effector_pose=((-0.36, 0.085, 0.30), (3.14, -1.0, -3.14)), gripper_position=0)
     time.sleep(2)
@@ -75,4 +68,3 @@ if __name__ == '__main__':
         command_type='shutdown', arm_state=None, gripper_state=None)
     command_queue.put(command)
     robot_controller.join()
-    # command_queue.put()
