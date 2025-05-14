@@ -44,17 +44,17 @@
             "x": {
                 "type": "axis",
                 "id": 0,
-                "scale": 0.008
+                "scale": 0.04
             },
             "y": {
                 "type": "axis",
                 "id": 1,
-                "scale": -0.008
+                "scale": -0.04
             },
             "z": {
                 "type": "axis",
                 "id": 4,
-                "scale": -0.008
+                "scale": -0.04
             },
             "roll": {
                 "type": "hat",

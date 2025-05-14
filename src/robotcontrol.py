@@ -9,7 +9,7 @@ import os
 from math import pi
 from typing import TypedDict, Callable, Any, TypeAlias
 
-from .refined_queue import Queue
+from refined_queue import Queue
 
 # 创建一个logger
 #logger = logging.getLogger()
@@ -204,7 +204,7 @@ class RobotEventDict(TypedDict):
     content: str
 
 Vector3: TypeAlias = tuple[float, float, float] # len = 3
-EulerAngles: TypeAlias = tuple[float, float, float] # len = 3. Whether its in radians or degrees depends on the context.
+EulerAngle: TypeAlias = tuple[float, float, float] # len = 3. Whether its in radians or degrees depends on the context.
 Quaternion: TypeAlias = tuple[float, float, float, float] # len = 4
 JointPosition: TypeAlias = tuple[float, float, float, float, float, float] # len = 6
 
@@ -213,7 +213,7 @@ class DynamicsParameters(TypedDict):
     payload: float
     inertia: tuple[float, ...] # len = 6
 
-class ToolPose(TypedDict):
+class PoseQuat(TypedDict):
     pos: Vector3
     ori: Quaternion
 
@@ -232,7 +232,7 @@ class RobotError(Exception):
         self.error_msg = error_msg
 
     def __str__(self):
-        return "RobotError type{0} code={1} msg={2}".format(self.error_type, self.error_code, self.error_msg)
+        return "RobotError type={0} code={1} msg={2}".format(self.error_type, self.error_code, self.error_msg)
 
 
 class RobotDefaultParameters:
@@ -438,7 +438,7 @@ class CoordinateSystem(TypedDict):
     coord_type: int
     calibrate_method: int
     calibrate_points: dict[str, tuple[float, ...]]
-    tool_desc: ToolPose
+    tool_desc: PoseQuat
 
 class Auboi5Robot:
     # 客户端个数
@@ -888,7 +888,7 @@ class Auboi5Robot:
             logger.warn("RSHD uninitialized or not login!!!")
             return None
 
-    def move_to_target_in_cartesian(self, pos: Vector3, rpy_xyz: EulerAngles):
+    def move_to_target_in_cartesian(self, pos: Vector3, rpy_xyz: EulerAngle):
         """
         * FUNCTION:    move_to_target_in_cartesian
         * DESCRIPTION: 给出笛卡尔坐标值和欧拉角，机械臂轴动到目标位置和姿态
@@ -1479,7 +1479,7 @@ class Auboi5Robot:
             logger.warn("RSHD uninitialized or not login!!!")
             return None
 
-    def base_to_user(self, pos: Vector3, ori: Quaternion, user_coord: CoordinateSystem, user_tool: ToolPose):
+    def base_to_user(self, pos: Vector3, ori: Quaternion, user_coord: CoordinateSystem, user_tool: PoseQuat):
         """
         * FUNCTION:    base_to_user
         * DESCRIPTION: 用户坐标系转基座坐标系
@@ -1506,7 +1506,7 @@ class Auboi5Robot:
         """
         return libpyauboi5.base_to_user(self.rshd, pos, ori, user_coord, user_tool)
 
-    def user_to_base(self, pos: Vector3, ori: Quaternion, user_coord: CoordinateSystem, user_tool: ToolPose):
+    def user_to_base(self, pos: Vector3, ori: Quaternion, user_coord: CoordinateSystem, user_tool: PoseQuat):
         """
         * FUNCTION:    user_to_base
         * DESCRIPTION: 用户坐标系转基座标系
@@ -1533,7 +1533,7 @@ class Auboi5Robot:
         """
         return libpyauboi5.user_to_base(self.rshd, pos, ori, user_coord, user_tool)
 
-    def base_to_base_additional_tool(self, flange_pos: Vector3, flange_ori: Quaternion, user_tool: ToolPose):
+    def base_to_base_additional_tool(self, flange_pos: Vector3, flange_ori: Quaternion, user_tool: PoseQuat):
         """
         * FUNCTION:    base_to_base_additional_tool
         * DESCRIPTION: 基坐标系转基座标得到工具末端点的位置和姿态
@@ -1549,7 +1549,7 @@ class Auboi5Robot:
         """
         return libpyauboi5.base_to_base_additional_tool(self.rshd, flange_pos, flange_ori, user_tool)
 
-    def rpy_to_quaternion(self, rpy: EulerAngles):
+    def rpy_to_quaternion(self, rpy: EulerAngle):
         """
         * FUNCTION:    rpy_to_quaternion
         * DESCRIPTION: 欧拉角转四元数
@@ -1583,7 +1583,7 @@ class Auboi5Robot:
             logger.warn("RSHD uninitialized !!!")
             return None
 
-    def set_tool_end_param(self, tool_end_param: ToolPose):
+    def set_tool_end_param(self, tool_end_param: PoseQuat):
         """
         * FUNCTION:    set_tool_end_param
         * DESCRIPTION: 设置末端工具参数
@@ -1680,7 +1680,7 @@ class Auboi5Robot:
             logger.warn("RSHD uninitialized or not login!!!")
             return None
 
-    def set_tool_kinematics_param(self, tool_end_param: ToolPose):
+    def set_tool_kinematics_param(self, tool_end_param: PoseQuat):
         """
         * FUNCTION:    set_tool_kinematics_param
         * DESCRIPTION: 设置工具的运动学参数　
@@ -2643,7 +2643,7 @@ def move_rotate_test():
             # 工具姿态（w,x,y,z 相对于法兰盘，不知道的情况下，默认填写如下信息）
             tool_ori_on_end = (1, 0, 0, 0)
 
-            tool_desc = ToolPose({"pos": tool_pos_on_end, "ori": tool_ori_on_end})
+            tool_desc = PoseQuat({"pos": tool_pos_on_end, "ori": tool_ori_on_end})
 
             # 得到法兰盘工具末端点相对于基座坐标系中的位置
             tool_pos_on_base = robot.base_to_base_additional_tool(current_pos['pos'],

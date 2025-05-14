@@ -25,6 +25,12 @@ if not hasattr(Queue, '__getitem__'):
             if self.__args__ is not None:
                 raise TypeError(f"Cannot subscript twice: {self.__origin__.__name__}[{self.__args__[0].__name__}]")
             return SubscriptableMethodProxy(self.__origin__, _type)
+        
+        def __or__(self, other: Any) -> Any:
+            pass
+        
+        def __ror__(self, other: Any) -> Any:
+            pass
     Queue = SubscriptableMethodProxy(Queue)
     # This function exists only to fool the type checker so that it believes
     # that `Queue` is not changed to something else than a class
