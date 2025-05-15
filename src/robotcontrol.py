@@ -4,12 +4,13 @@ import time
 import libpyauboi5
 import logging
 from logging.handlers import RotatingFileHandler
-from multiprocessing import Process
+# from multiprocessing import Process
+from threading import Thread
 import os
 from math import pi
 from typing import TypedDict, Callable, Any, TypeAlias
 
-from refined_queue import Queue
+from queue import Queue
 
 # 创建一个logger
 #logger = logging.getLogger()
@@ -178,7 +179,7 @@ class RobotErrorType:
     RobotError_RSHD_UNINIT = RobotError_Base + 2  # 库未初始化
     RobotError_NoLink = RobotError_Base + 3  # 无链接
     RobotError_Move = RobotError_Base + 4  # 机械臂移动错误
-    RobotError_ControlError = RobotError_Base + int(RobotEventType.RobotEvent_robotControllerError)
+    RobotError_ControlError = RobotError_Base + RobotEventType.RobotEvent_robotControllerError
     RobotError_LOGIN_FAILED = RobotError_Base + 5  # 机械臂登录失败
     RobotError_NotLogin = RobotError_Base + 6  # 机械臂未登录
     RobotError_ERROR_ARGS = RobotError_Base + 7  # 参数错误
@@ -1017,7 +1018,7 @@ class Auboi5Robot:
             logger.warn("RSHD uninitialized or not login!!!")
             return RobotErrorType.RobotError_NotLogin
 
-    def append_offline_track_waypoint(self, waypoints: list[JointPosition]):
+    def append_offline_track_waypoint(self, waypoints: tuple[JointPosition, ...]):
         """
         * FUNCTION:    append_offline_track_waypoint
         * DESCRIPTION: 向服务器添加非在线轨迹运动路点
@@ -1184,7 +1185,7 @@ class Auboi5Robot:
         """
         self.check_event()
         if self.rshd >= 0 and self.connected:
-            if 0.01 >= blend_radius <= 0.05:
+            if 0.01 <= blend_radius <= 0.05:
                 return libpyauboi5.set_blend_radius(self.rshd, blend_radius)
             else:
                 logger.warn("blend radius value range must be 0.01~0.05")
@@ -2282,7 +2283,8 @@ def test(test_count: int):
     try:
 
         # 链接服务器
-        ip = 'localhost'
+        # ip = 'localhost'
+        ip = '192.168.1.41'
         #ip = '192.168.199.200'
 
         port = 8899
@@ -2295,7 +2297,7 @@ def test(test_count: int):
             #robot.robot_shutdown()
             #
             # # 上电
-            robot.robot_startup()
+            # robot.robot_startup()
             #
             # # 设置碰撞等级
             robot.set_collision_class(7)
@@ -2327,51 +2329,51 @@ def test(test_count: int):
             while test_count > 0:
                 test_count -= 1
 
-                joint_status = robot.get_joint_status()
-                logger.info("joint_status={0}".format(joint_status))
+                # joint_status = robot.get_joint_status()
+                # logger.info("joint_status={0}".format(joint_status))
 
-                # 初始化全局配置文件
-                robot.init_profile()
+                # # 初始化全局配置文件
+                # robot.init_profile()
 
-                # 设置关节最大加速度
-                robot.set_joint_maxacc((1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
+                # # 设置关节最大加速度
+                # robot.set_joint_maxacc((1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
 
-                # 设置关节最大加速度
-                robot.set_joint_maxvelc((1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
+                # # 设置关节最大加速度
+                # robot.set_joint_maxvelc((1.5, 1.5, 1.5, 1.5, 1.5, 1.5))
 
-                joint_radian = (0.541678, 0.225068, -0.948709, 0.397018, -1.570800, 0.541673)
-                logger.info("move joint to {0}".format(joint_radian))
+                # joint_radian = (0.541678, 0.225068, -0.948709, 0.397018, -1.570800, 0.541673)
+                # logger.info("move joint to {0}".format(joint_radian))
 
-                robot.move_joint(joint_radian)
+                # robot.move_joint(joint_radian)
 
-                # 获取关节最大加速度
-                logger.info(robot.get_joint_maxacc())
+                # # 获取关节最大加速度
+                # logger.info(robot.get_joint_maxacc())
 
-                # 正解测试
-                fk_ret = robot.forward_kin((-0.000003, -0.127267, -1.321122, 0.376934, -1.570796, -0.000008))
-                logger.info(fk_ret)
+                # # 正解测试
+                # fk_ret = robot.forward_kin((-0.000003, -0.127267, -1.321122, 0.376934, -1.570796, -0.000008))
+                # logger.info(fk_ret)
 
-                assert fk_ret is not None, "fk_ret is None"
+                # assert fk_ret is not None, "fk_ret is None"
 
-                # 逆解
-                joint_radian = (0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000)
-                ik_result = robot.inverse_kin(joint_radian, fk_ret['pos'], fk_ret['ori'])
-                logger.info(ik_result)
+                # # 逆解
+                # joint_radian = (0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000)
+                # ik_result = robot.inverse_kin(joint_radian, fk_ret['pos'], fk_ret['ori'])
+                # logger.info(ik_result)
 
-                # 轴动1
-                joint_radian = (0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000)
-                logger.info("move joint to {0}".format(joint_radian))
-                robot.move_joint(joint_radian)
+                # # 轴动1
+                # joint_radian = (0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000)
+                # logger.info("move joint to {0}".format(joint_radian))
+                # robot.move_joint(joint_radian)
 
-                # 轴动2
-                joint_radian = (0.541678, 0.225068, -0.948709, 0.397018, -1.570800, 0.541673)
-                logger.info("move joint to {0}".format(joint_radian))
-                robot.move_joint(joint_radian)
+                # # 轴动2
+                # joint_radian = (0.541678, 0.225068, -0.948709, 0.397018, -1.570800, 0.541673)
+                # logger.info("move joint to {0}".format(joint_radian))
+                # robot.move_joint(joint_radian)
 
-                # 轴动3
-                joint_radian = (-0.000003, -0.127267, -1.321122, 0.376934, -1.570796, -0.000008)
-                logger.info("move joint to {0}".format(joint_radian))
-                robot.move_joint(joint_radian)
+                # # 轴动3
+                # joint_radian = (-0.000003, -0.127267, -1.321122, 0.376934, -1.570796, -0.000008)
+                # logger.info("move joint to {0}".format(joint_radian))
+                # robot.move_joint(joint_radian)
 
                 # 设置机械臂末端最大线加速度(m/s)
                 robot.set_end_max_line_acc(0.5)
@@ -2382,16 +2384,20 @@ def test(test_count: int):
                 # 清除所有已经设置的全局路点
                 robot.remove_all_waypoint()
 
+                joint_radian: JointPosition
                 # 添加全局路点1,用于轨迹运动
-                joint_radian = (-0.000003, -0.127267, -1.321122, 0.376934, -1.570796, -0.000008)
+                joint_radian = (-0.7112728429721522, -0.021874644636431954, -2.218969214881827, -1.494117051900418, -0.9894853788744931, 1.134253484551672)
+                # joint_radian = (-0.000003, -0.127267, -1.321122, 0.376934, -1.570796, -0.000008)
                 robot.add_waypoint(joint_radian)
 
                 # 添加全局路点2,用于轨迹运动
-                joint_radian = (-0.211675, -0.325189, -1.466753, 0.429232, -1.570794, -0.211680)
+                joint_radian = (-0.5034947255168811, 0.7364549880609368, -1.7665311167171027, -1.8704916360556734, -1.1529642530136457, 1.2806917789075924)
+                # joint_radian = (-0.211675, -0.325189, -1.466753, 0.429232, -1.570794, -0.211680)
                 robot.add_waypoint(joint_radian)
 
                 # 添加全局路点3,用于轨迹运动
-                joint_radian = (-0.037186, -0.224307, -1.398285, 0.396819, -1.570796, -0.037191)
+                joint_radian = (-0.37982871754205716, 0.2828162658414888, -2.157430476268566, -1.8353946562431234, -1.253761390644101, 1.3575119825083788)
+                # joint_radian = (-0.037186, -0.224307, -1.398285, 0.396819, -1.570796, -0.037191)
                 robot.add_waypoint(joint_radian)
 
                 # 设置圆运动圈数
@@ -2420,7 +2426,7 @@ def test(test_count: int):
         # 断开服务器链接
         if robot.connected:
             # 关闭机械臂
-            robot.robot_shutdown()
+            # robot.robot_shutdown()
             # 断开机械臂链接
             robot.disconnect()
         # 释放库资源
@@ -2761,9 +2767,9 @@ def test_rsm():
         Auboi5Robot.uninitialize()
 
 
-class GetRobotWaypointProcess(Process):
+class GetRobotWaypointProcess(Thread):
     def __init__(self):
-        Process.__init__(self)
+        super().__init__()
         self.isRunWaypoint = False
         self._waypoints = None
 
@@ -2860,7 +2866,7 @@ def test_process_demo():
 
         queue = Queue[Any]()
 
-        p = Process(target=runWaypoint, args=(queue,))
+        p = Thread(target=runWaypoint, args=(queue,))
         p.start()
         time.sleep(5)
         print("process started.")
@@ -2931,21 +2937,6 @@ def test_process_demo():
 #     test_process_demo()
 #     logger.info("test completed")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+if __name__ == "__main__":
+    test(2)
 

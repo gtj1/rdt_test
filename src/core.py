@@ -5,10 +5,10 @@ import numpy as np
 import numpy.typing as npt
 # from dataclasses import dataclass
 from typing import TypedDict, Literal, TypeAlias
-from multiprocessing import Process
+from threading import Thread
 
 # import a wrapped `Queue` so that it supports generic types like `Queue[RobotCommand]`
-from refined_queue import Queue
+from queue import Queue
 
 import pyrealsense2 as rs
 from jodellSdk.jodellSdkDemo import RgClawControl
@@ -65,7 +65,7 @@ class JoystickInputInfo(TypedDict):
 RecordFrame: TypeAlias = tuple[RobotCommand, CameraFrame]
 
 
-class RobotController(Process):
+class RobotController(Thread):
     arm: Auboi5Robot
     arm_ip: str
     arm_port: int
@@ -201,7 +201,9 @@ class RobotController(Process):
     def arm_move_to(self, joint_position: JointPosition) -> bool:
         try:
             # print(f'Moving arm to joint angles {joint_position}')
+            # print(f"joint_radian = {joint_position}")
             self.arm.move_joint(joint_position, issync=False)
+            # self.arm.add_waypoint(joint_position)
             return True
         except Exception as e:
             print(f'Failed to move arm to joint angles {joint_position}: {e}')
@@ -234,6 +236,39 @@ class RobotController(Process):
     @staticmethod
     def is_valid_joint_position(joint_position: JointPosition) -> bool:
         return not np.isnan(np.array(joint_position)).any().item()
+    
+    @staticmethod
+    def create_move_command(
+        joint_position: JointPosition | None = None,
+        end_effector_pose: PoseEuler | None = None,
+        gripper_position: int | None = None,
+        gripper_speed: int | None = None,
+        gripper_force: int | None = None
+    ) -> RobotCommand:
+        if joint_position is None:
+            joint_position = RobotController.undefined_joint_position
+        if end_effector_pose is None:
+            end_effector_pose = RobotController.undefined_pose
+        if gripper_position is None:
+            gripper_position = -1
+        if gripper_speed is None:
+            gripper_speed = 255
+        if gripper_force is None:
+            gripper_force = 0
+        
+        arm_state = ArmState(
+            arm_name=config['arm']['name'],
+            joint_position=joint_position,
+            end_effector_pose=end_effector_pose, #
+        )
+        gripper_state = GripperState(
+            position=gripper_position,
+            speed=255,
+            torque=0
+        )
+        return RobotCommand(
+            command_type='move', arm_state=arm_state, gripper_state=gripper_state
+        )
 
     def execute(self, command: RobotCommand) -> bool:
         command_type = command['command_type']

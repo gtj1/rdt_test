@@ -4,7 +4,7 @@ import os
 from typing import Iterator
 from robotcontrol import logger_init
 
-class ReplayFeeder(Process):
+class ReplayFeeder(Thread):
     dataset_path: str
     npy_files: list[str]
     command_queue: Queue[RobotCommand]
@@ -45,7 +45,7 @@ class ReplayFeeder(Process):
         
 
 
-class DataRecorder(Process):
+class DataRecorder(Thread):
     save_path: str
     index: int = 0
     record_queue: Queue[RobotRecord]
@@ -108,7 +108,7 @@ class DataRecorder(Process):
 
 import grasp_demo
 
-from grasp_demo import move
+from grasp_demo import create_and_send_command as move
 
 def record():
     grasp_demo.command_queue.put(
@@ -119,6 +119,8 @@ def record():
         )
     )
 
+def thread1():
+    pass
 
 if __name__ == '__main__':
     logger_init()

@@ -2,38 +2,24 @@ from core import *
 
 from robotcontrol import logger_init
 
-def move(
+
+def create_and_send_command(
     joint_position: JointPosition | None = None,
     end_effector_pose: PoseEuler | None = None,
     gripper_position: int | None = None,
     gripper_speed: int | None = None,
     gripper_force: int | None = None
 ):
-    if joint_position is None:
-        joint_position = robot_controller.undefined_joint_position
-    if end_effector_pose is None:
-        end_effector_pose = robot_controller.undefined_pose
-    if gripper_position is None:
-        gripper_position = -1
-    if gripper_speed is None:
-        gripper_speed = 255
-    if gripper_force is None:
-        gripper_force = 0
-    
-    arm_state = ArmState(
-        arm_name=config['arm']['name'],
+    command = RobotController.create_move_command(
         joint_position=joint_position,
-        end_effector_pose=end_effector_pose, #
-    )
-    gripper_state = GripperState(
-        position=gripper_position,
-        speed=255,
-        torque=0
-    )
-    command = RobotCommand(
-        command_type='move', arm_state=arm_state, gripper_state=gripper_state
+        end_effector_pose=end_effector_pose,
+        gripper_position=gripper_position,
+        gripper_speed=gripper_speed,
+        gripper_force=gripper_force
     )
     command_queue.put(command)
+
+move = create_and_send_command
 
 if __name__ == '__main__':
     logger_init()
