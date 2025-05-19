@@ -314,6 +314,12 @@ class RobotController(Thread):
         
         elif command_type == 'shutdown':
             self.running = False
+            if self.record_queue is not None:
+                self.record_queue.put(RobotRecord(
+                    timestamp=time.time(),
+                    state=command,
+                    action=command
+                ))
             return True
         elif command_type == 'record':
             return self.record_data()
