@@ -336,7 +336,7 @@ class RobotController(Thread):
             baudRate=self.gripper_baudrate,
             state=False  # close
         )
-        print(f'{self.arm_name} controller shutdown')
+        print(f'{self.arm_name} controller release')
 
     def check_command_queue(self) -> None:
         if self.command_queue.empty():
