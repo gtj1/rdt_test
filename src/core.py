@@ -3,18 +3,16 @@ import cv2
 import json
 import numpy as np
 import numpy.typing as npt
-# from dataclasses import dataclass
 from typing import TypedDict, Literal, TypeAlias
 from threading import Thread
 
-# import a wrapped `Queue` so that it supports generic types like `Queue[RobotCommand]`
 from queue import Queue
 
 import pyrealsense2 as rs
 from jodellSdk.jodellSdkDemo import RgClawControl
 from robotcontrol import Auboi5Robot, RobotErrorType
 
-with open('src/robot_config.json', 'r', encoding='utf-8') as f:
+with open('configs/robot_config.json', 'r', encoding='utf-8') as f:
     config = json.load(f)
 
 Vector3: TypeAlias = tuple[float, float, float]  # (x, y, z) in meters
@@ -202,6 +200,7 @@ class RobotController(Thread):
         try:
             # print(f'Moving arm to joint angles {joint_position}')
             # print(f"joint_radian = {joint_position}")
+            print("calling move joint")
             self.arm.move_joint(joint_position, issync=False)
             # self.arm.add_waypoint(joint_position)
             return True
@@ -291,7 +290,11 @@ class RobotController(Thread):
                 command['arm_state'] = arm_state
             else:
                 # No move
+                arm_state = self.get_arm_state()
+                assert arm_state is not None, 'Failed to get arm state'
+                command['arm_state'] = arm_state
                 move_arm = False
+                
             
             if gripper_state['position'] == -1:
                 # indicating that gripper state is not provided
@@ -470,7 +473,10 @@ class CameraCollector:
         rs_config.enable_stream(
             rs.stream.color, self.rgbd_width, self.rgbd_height, rs.format.bgr8, self.rgbd_frame_rate
         )
-        self.rgbd_camera.start(rs_config)
+        
+        profile = self.rgbd_camera.start(rs_config)
+        sensor = profile.get_device().first_depth_sensor()
+        sensor.set_option(rs.option.frames_queue_size, 1)
 
         self.usb_camera = cv2.VideoCapture(0)
         self.usb_width = config['camera']['usb']['width']

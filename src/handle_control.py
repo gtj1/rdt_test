@@ -3,7 +3,7 @@ from core import *
 import pygame
 from robotcontrol import logger_init
 
-class JoystickFeeder(Process):
+class JoystickFeeder(Thread):
     last_command_time: float
     joystick: pygame.joystick.JoystickType
     state_queue: Queue[RobotRecord]
@@ -163,13 +163,13 @@ class JoystickFeeder(Process):
 if __name__ == '__main__':
     logger_init()
     replay_path = config['path']['replay']
-    save_path = config['path']['save']
+    record_path = config['path']['record']
 
-    command_queue: Queue[RobotCommand] = Queue()
-    record_queue: Queue[RobotRecord] = Queue()
+    command_queue = Queue[RobotCommand]()
+    record_queue = Queue[RobotRecord]()
 
     # replay_feeder = ReplayFeeder(command_queue, replay_path)
-    # data_collector = DataCollector(record_queue, save_path)
+    # data_collector = DataCollector(record_queue, record_path)
 
     print('Start collecting data...')
 

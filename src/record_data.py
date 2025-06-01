@@ -135,7 +135,9 @@ if __name__ == '__main__':
     try:
         grasp_demo.robot_controller = RobotController(command_queue, record_queue)
 
-        recorder = DataRecorder(record_queue, './out')
+        with open('configs/robot_config.json', 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        recorder = DataRecorder(record_queue, config['path']['record'])
 
         grasp_demo.robot_controller.start()
         recorder.start()
@@ -148,20 +150,29 @@ if __name__ == '__main__':
     record_thread = Thread(target=send_priodic_record_command)
     record_thread.start()
 
+
     move(end_effector_pose=((-0.36, 0.085, 0.30), (3.14, -1.0, -3.14)), gripper_position=0)
     time.sleep(2)
 
-    move(end_effector_pose=((-0.48, 0.085, 0.18), (3.14, -1.0, -3.14)), gripper_position=80)
+    move(end_effector_pose=((-0.48, 0.085, 0.18), (3.14, -1.0, -3.14)))
     time.sleep(2)
+
+    move(gripper_position=80)
+    time.sleep(0.5)
 
     move(end_effector_pose=((-0.40, 0, 0.25), (3.14, -1.0, -3.14)))
     time.sleep(1.5)
 
-    move(end_effector_pose=((-0.32, -0.087, 0.18), (3.14, -1.0, -3.14)), gripper_position=0)
-    time.sleep(2)
+    move(end_effector_pose=((-0.32, -0.087, 0.18), (3.14, -1.0, -3.14)))
+    time.sleep(1.5)
+    
+    move(gripper_position=0)
+    time.sleep(0.5)
 
-    move(end_effector_pose=((-0.32, -0.087, 0.30), (3.14, -1.0, -3.14)), gripper_position=255)
-    time.sleep(2)
+    move(end_effector_pose=((-0.32, -0.087, 0.30), (3.14, -1.0, -3.14)))
+    time.sleep(1.5)
+    
+    move(gripper_position=255)
     
     running_flag = False
     command = RobotCommand(
